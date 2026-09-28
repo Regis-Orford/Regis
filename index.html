@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Portail de gestion de la patrouille Mont Orford">
+  <meta name="theme-color" content="#1b4b72">
+  <title>Portail</title>
+  
+  <!-- Favicon -->
+  <link rel="icon" data-brand href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏔️</text></svg>">
+  
+  <!-- CSS -->
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body data-theme="light" data-module="portal" data-nav="portal" data-page="portal">
+  <script src="js/core/config.js"></script>
+  <script src="js/core/network.js"></script>
+  <script src="js/core/layout.js"></script>
+  <!-- Loading Screen -->
+  <div id="loading" class="page-loading">
+    <div class="loading-spinner"></div>
+    <p class="loading-text">Vérification de l'authentification...</p>
+  </div>
+
+  <!-- Main Content -->
+  <main id="main-content" class="main" style="display: none;">
+    <!-- Welcome Section -->
+    <section class="welcome-section">
+      <h1 class="welcome-title">
+        Bienvenue, <span class="welcome-user" data-user-name>-</span>
+      </h1>
+      <p class="welcome-subtitle">Sélectionnez une application pour commencer</p>
+    </section>
+
+    <!-- App Grid -->
+    <section class="app-grid" id="app-grid">
+      <!-- Cards will be generated dynamically by JavaScript -->
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer class="footer footer--simple">
+    <div class="footer__content">
+      <p class="footer__copyright">© 2026 Regis for Mont Orford</p>
+      <p class="footer__version" id="app-version"></p>
+    </div>
+  </footer>
+
+  <!-- Status Messages Container -->
+  <div id="status-messages"></div>
+
+  <!-- Firebase SDK -->
+
+  <!-- Core JS -->
+  <script src="js/core/utils.js"></script>
+  <script src="js/core/theme.js"></script>
+  <script src="js/core/ui.js"></script>
+  <script src="js/core/firebase-loader.js"></script>
+  <script src="js/core/auth.js"></script>
+
+  <!-- Page JS -->
+  <script>
+    // App definitions for the portal
+    const portalApps = [
+      {
+        id: 'inspection',
+        title: 'Inspections',
+        icon: '🔍',
+        description: 'Gestion des inspections de sentiers et abris de randonnée. Créez des rapports, consultez l\'historique et gérez le statut des pistes.',
+        url: 'pages/inspection-dashboard.html',
+        permission: 'allowInspection',
+        permissionDefault: false,
+        actionText: 'Accéder à l\'application'
+      },
+      {
+        id: 'infraction',
+        title: 'Infractions',
+        icon: '🚨',
+        description: 'Enregistrement et gestion des infractions constatées sur le terrain.',
+        url: 'pages/infraction-report.html',
+        permission: 'allowInfraction',
+        permissionDefault: false,
+        actionText: 'Accéder à l\'application'
+      },
+      {
+        id: 'signalisation',
+        title: 'Signalisation',
+        icon: '🚧',
+        description: 'Gestion de la signalisation des pistes. Capturez l\'état et signalez les problèmes.',
+        url: 'pages/signalisation-report.html',
+        permission: 'allowSignalisation',
+        permissionDefault: false,
+        actionText: 'Accéder à l\'application'
+      },
+      {
+        id: 'support',
+        title: 'Support',
+        icon: '📋',
+        description: 'Signalez un bug, posez une question ou proposez une amélioration.',
+        url: 'pages/support.html',
+        permission: null, // Accessible to all authenticated users
+        actionText: 'Accéder au support'
+      },
+      {
+        id: 'admin',
+        title: 'Administration',
+        icon: '⚙️',
+        description: 'Gestion des utilisateurs, export de données et paramètres du système.',
+        url: 'pages/user-management.html',
+        requireAdmin: true, // Special flag for admin-only
+        actionText: 'Accéder à l\'administration'
+      },
+      {
+        id: 'status',
+        title: 'Statut des sentiers',
+        icon: '🗺️',
+        description: 'Consultez l\'état actuel des sentiers de la saison (ski en hiver, vélo en été) - page publique.',
+        url: 'pages/public-status.html',
+        permission: null, // Public
+        actionText: 'Voir le statut',
+        isPublic: true
+      }
+    ];
+
+    /**
+     * Generate app cards based on user permissions
+     */
+    function generateAppCards(userData) {
+      const appGrid = document.getElementById('app-grid');
+      if (!appGrid) return;
+
+      appGrid.innerHTML = '';
+
+      const isAdmin = userData.role === 'admin' || userData.role === 'system_admin';
+
+      portalApps.forEach(app => {
+        // Check admin-only apps
+        if (app.requireAdmin && !isAdmin) {
+          return; // Skip admin-only cards for non-admins
+        }
+
+        // Check permission
+        let hasAccess = true;
+        if (app.permission) {
+          if (app.permissionDefault) {
+            // Default true unless explicitly false
+            hasAccess = userData[app.permission] !== false;
+          } else {
+            // Default false unless explicitly true
+            hasAccess = userData[app.permission] === true;
+          }
+        }
+
+        // Skip card entirely if user doesn't have access (instead of showing disabled)
+        if (!hasAccess) return;
+
+        // Create card
+        const card = document.createElement('a');
+        card.href = app.url;
+        card.className = `app-card app-card--${app.id}`;
+
+        card.innerHTML = `
+          <div class="app-card__header">
+            <div class="app-card__icon">${app.icon}</div>
+            <h3 class="app-card__title">${app.title}</h3>
+          </div>
+          <div class="app-card__body">
+            <p class="app-card__description">${app.description}</p>
+          </div>
+          <div class="app-card__footer">
+            <span class="app-card__action">
+              ${app.actionText}
+              <span>→</span>
+            </span>
+          </div>
+        `;
+
+        appGrid.appendChild(card);
+      });
+    }
+
+    /**
+     * Initialize the portal page
+     */
+    function initPortal() {
+      // Set version
+      const versionEl = document.getElementById('app-version');
+      if (versionEl) {
+        versionEl.textContent = `v${APP_CONFIG.version}`;
+      }
+
+      // Check auth and generate cards
+      checkAuthStatus({
+        requireAuth: true,
+        onAuthenticated: (userData) => {
+          generateAppCards(userData);
+        }
+      });
+    }
+
+    // Initialize when DOM is ready
+    onFirebaseReady( initPortal);
+  </script>
+</body>
+</html>
