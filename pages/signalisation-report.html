@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Rapport de signalisation">
+  <meta name="theme-color" content="#f59e0b">
+  <title>Rapport de Signalisation</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚧</text></svg>">
+  <link rel="stylesheet" href="../css/main.css">
+  <!-- EXIF Library for GPS extraction -->
+  <script src="https://cdn.jsdelivr.net/npm/exif-js@2.3.0/exif.min.js"></script>
+  <style>
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media (max-width: 640px) { .form-row { grid-template-columns: 1fr; } }
+
+    /* Photo upload area */
+    .photo-upload-area {
+      border: 2px dashed var(--theme-border);
+      border-radius: var(--radius-lg);
+      padding: 1.5rem;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      background: var(--theme-surface-alt);
+    }
+    .photo-upload-area:hover, .photo-upload-area.drag-over {
+      border-color: var(--theme-accent);
+      background: rgba(var(--theme-accent-rgb), 0.05);
+    }
+    .photo-upload-area__icon { font-size: 2rem; margin-bottom: 0.5rem; }
+    .photo-upload-area__text { font-weight: 500; color: var(--theme-text); }
+    .photo-upload-area__hint { font-size: 0.8rem; color: var(--theme-text-secondary); margin-top: 0.25rem; }
+
+    /* Photo previews */
+    .photo-preview-container { margin-top: 1rem; }
+
+    .is-invalid { border-color: var(--color-danger) !important; box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.2) !important; }
+
+    .validation-note { font-size: 0.8rem; color: var(--theme-text-secondary); margin-top: 0.5rem; padding: 0.75rem; background: var(--theme-surface-alt); border-radius: var(--radius-md); }
+  </style>
+</head>
+<body data-theme="light" data-module="signalisation" data-nav="signalisation" data-page="signalisation-report">
+  <script src="../js/core/config.js"></script>
+  <script src="../js/core/network.js"></script>
+  <script src="../js/core/layout.js"></script>
+  <!-- Loading -->
+  <div id="loading" class="page-loading"><div class="loading-spinner"></div><p class="loading-text">Chargement...</p></div>
+
+  <!-- Main Content -->
+  <main id="main-content" class="main" style="display: none;">
+    <div class="page-header"><div class="page-header__content"><h1 class="page-title">Rapport de signalisation</h1><p class="page-subtitle">Enregistrer l'état de la signalisation</p></div></div>
+
+    <!-- Report Selector -->
+    <section class="content-section">
+      <div class="section-card">
+        <div class="section-card__header"><h2 class="section-card__title">📋 Rapport existant ou nouveau</h2></div>
+        <div class="section-card__body">
+          <div class="form-group">
+            <select class="form-select" id="report-selector">
+              <option value="new">+ Nouveau rapport</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Report Form -->
+    <section class="content-section">
+      <form id="signalisation-form" class="section-card">
+        <div class="section-card__header"><h2 class="section-card__title">📝 Détails du rapport</h2></div>
+        <div class="section-card__body">
+          
+          <!-- Inspecteur (auto) -->
+          <div class="form-group">
+            <label class="form-label">Inspecteur</label>
+            <input type="text" class="form-input" id="inspector-name" readonly>
+          </div>
+
+          <!-- Date / Heure -->
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="report-date">Date <span class="form-required">*</span></label>
+              <input type="date" class="form-input" id="report-date" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="report-time">Heure <span class="form-required">*</span></label>
+              <input type="time" class="form-input" id="report-time" required>
+            </div>
+          </div>
+
+          <!-- Statut -->
+          <div class="form-group">
+            <label class="form-label" for="status-select">Statut <span class="form-required">*</span> <span class="form-hint">(ou photo obligatoire)</span></label>
+            <select class="form-select" id="status-select">
+              <option value="">-- Sélectionner un statut --</option>
+              <option value="ouverte">🟢 Ouverte</option>
+              <option value="attention-requise">🟡 Attention requise</option>
+              <option value="fermee">🔴 Fermée</option>
+            </select>
+          </div>
+
+          <!-- Photo -->
+          <div class="form-group">
+            <label class="form-label">Photos <span class="form-hint">(ou statut obligatoire)</span></label>
+            <div class="photo-upload-area" id="photo-upload">
+              <div class="photo-upload-area__icon">📷</div>
+              <div class="photo-upload-area__text">Cliquez ou déposez des photos ici</div>
+              <div class="photo-upload-area__hint">Format accepté: JPG, PNG • Max 10 photos</div>
+            </div>
+            <div class="photo-preview-container" id="photo-preview-container"></div>
+            <div class="validation-note">
+              <strong>Note:</strong> Au moins un statut OU une photo est requis. Les deux peuvent être fournis.
+            </div>
+          </div>
+
+          <!-- Localisation -->
+          <div class="form-group">
+            <label class="form-label" for="sector-select">Secteur <span class="form-required">*</span></label>
+            <select class="form-select" id="sector-select" required>
+              <option value="">-- Sélectionner un secteur --</option><!-- filled by SectorService -->
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="trail-select">Piste <span class="form-required">*</span></label>
+            <select class="form-select" id="trail-select" required>
+              <option value="">-- Sélectionner d'abord un secteur --</option>
+            </select>
+          </div>
+
+          <!-- Commentaires -->
+          <div class="form-group">
+            <label class="form-label" for="comments">Commentaires <span class="form-hint">(optionnel)</span></label>
+            <textarea class="form-textarea" id="comments" rows="3" placeholder="Commentaires optionnels..."></textarea>
+          </div>
+
+        </div>
+
+        <!-- Actions -->
+        <div class="section-card__footer">
+          <button type="button" class="btn btn-secondary" id="reset-btn">Réinitialiser</button>
+          <button type="submit" class="btn btn-primary" id="save-btn">Enregistrer</button>
+          <button type="button" class="btn btn-primary" id="modify-btn" style="display:none;">Modifier</button>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer class="footer footer--simple"><div class="footer__content"><p class="footer__copyright">© 2026 Regis for Mont Orford</p></div></footer>
+
+  <!-- Scripts -->
+  <script src="../js/core/utils.js"></script>
+  <script src="../js/core/theme.js"></script>
+  <script src="../js/core/ui.js"></script>
+  <script src="../js/core/firebase-loader.js"></script>
+  <script src="../js/core/auth.js"></script>
+  <script src="../js/utils/photo-picker.js"></script>
+  <script src="../js/services/photo-service.js"></script>
+  <script src="../js/services/sector-service.js"></script>
+
+  <script>
+    const STATUS_LABELS = {
+      'ouverte': '🟢 Ouverte',
+      'attention-requise': '🟡 Attention requise',
+      'fermee': '🔴 Fermée'
+    };
+
+    // State
+    let userReports = [];
+    let sectors = []; // sectors and their trails, from Firestore (SectorService)
+    let currentReportId = null;
+    // Storage files the loaded report showed; empty for a new report.
+    // On modify, whatever the inspector removed is deleted from Storage.
+    let loadedFileUrls = [];
+    let isNewReport = true;
+    let photoPicker = null;
+
+    // Elements
+    let reportSelector, inspectorNameInput, reportDate, reportTime;
+    let statusSelect, photoUploadArea, photoPreviewContainer;
+    let sectorSelect, trailSelect, commentsInput;
+    let saveBtn, modifyBtn, resetBtn;
+
+    function initSignalisationReport() {
+      bindElements();
+      bindEvents();
+      
+      // Setup offline detection
+      setupOfflineDetection();
+      
+      checkAuthStatus({
+        requireAuth: true,
+        requiredPermission: 'allowSignalisation',
+        permissionDefault: false,
+        onAuthenticated: async (userData) => {
+          if (userData.role === 'admin' || userData.role === 'system_admin') {
+            document.querySelectorAll('.nav__link--admin, .mobile-nav__link--admin').forEach(el => el.style.display = '');
+          }
+          setDefaultValues();
+          await loadSectors();
+          loadUserReports();
+        }
+      });
+    }
+
+    function bindElements() {
+      reportSelector = document.getElementById('report-selector');
+      inspectorNameInput = document.getElementById('inspector-name');
+      reportDate = document.getElementById('report-date');
+      reportTime = document.getElementById('report-time');
+      statusSelect = document.getElementById('status-select');
+      photoUploadArea = document.getElementById('photo-upload');
+      photoPreviewContainer = document.getElementById('photo-preview-container');
+      sectorSelect = document.getElementById('sector-select');
+      trailSelect = document.getElementById('trail-select');
+      commentsInput = document.getElementById('comments');
+      saveBtn = document.getElementById('save-btn');
+      modifyBtn = document.getElementById('modify-btn');
+      resetBtn = document.getElementById('reset-btn');
+
+      // Initialize PhotoPicker
+      photoPicker = new PhotoPicker({
+        dropZone: photoUploadArea,
+        previewContainer: photoPreviewContainer,
+        multiple: true,
+        maxPhotos: 10
+      });
+    }
+
+    function bindEvents() {
+      reportSelector.addEventListener('change', handleReportChange);
+      sectorSelect.addEventListener('change', populateTrails);
+      document.getElementById('signalisation-form').addEventListener('submit', handleSubmit);
+      modifyBtn.addEventListener('click', handleModify);
+      resetBtn.addEventListener('click', resetForm);
+    }
+
+    function setDefaultValues() {
+      inspectorNameInput.value = currentUserData.name || currentUser.email;
+      // Use local timezone (getLocalDateTime from utils.js)
+      const { date, time } = getLocalDateTime();
+      reportDate.value = date;
+      reportTime.value = time;
+    }
+
+    async function loadSectors() {
+      try {
+        sectors = await SectorService.load();
+      } catch (e) {
+        console.error('Error loading sectors:', e);
+        showToast('Impossible de charger les secteurs. Rechargez la page.', 'error');
+      }
+      SectorService.fillSectors(sectorSelect, sectors, '-- Sélectionner un secteur --');
+    }
+
+    function populateTrails() {
+      const sector = SectorService.find(sectors, sectorSelect.value);
+      SectorService.fillTrails(trailSelect, sector, '-- Sélectionner une piste --');
+    }
+
+    async function loadUserReports() {
+      try {
+        const snap = await db.collection('signalisations')
+          .where('inspectorId', '==', currentUser.uid)
+          .orderBy('createdAt', 'desc')
+          .limit(50)
+          .get();
+        
+        userReports = [];
+        reportSelector.innerHTML = '<option value="new">+ Nouveau rapport</option>';
+        
+        snap.forEach(doc => {
+          const data = doc.data();
+          if (!Network.matches(data)) return; // this activity's reports only
+          userReports.push({ id: doc.id, ...data });
+          
+          const date = data.createdAt?.toDate?.();
+          const dateStr = date ? date.toLocaleDateString('fr-CA') : 'Date inconnue';
+          const trail = data.trail || 'N/A';
+          const status = STATUS_LABELS[data.status] || data.status || 'Sans statut';
+          
+          const opt = document.createElement('option');
+          opt.value = doc.id;
+          opt.textContent = `${dateStr} - ${trail} - ${status}`;
+          reportSelector.appendChild(opt);
+        });
+      } catch (e) {
+        console.error('Error loading reports:', e);
+      }
+    }
+
+    function handleReportChange() {
+      const selectedId = reportSelector.value;
+      if (selectedId === 'new') { resetForm(); return; }
+      
+      const report = userReports.find(r => r.id === selectedId);
+      if (!report) return;
+      
+      currentReportId = selectedId;
+      isNewReport = false;
+      
+      // Populate form with local timezone
+      if (report.createdAt?.toDate) {
+        const d = report.createdAt.toDate();
+        const year = d.getFullYear();
+        const month = (d.getMonth() + 1).toString().padStart(2, '0');
+        const day = d.getDate().toString().padStart(2, '0');
+        reportDate.value = `${year}-${month}-${day}`;
+        reportTime.value = d.toTimeString().slice(0, 5);
+      }
+      
+      statusSelect.value = report.status || '';
+      // The record may carry an older sector id (alias): it resolves to the current sector
+      SectorService.selectSector(sectorSelect, sectors, report.sector);
+      populateTrails();
+      // By trail id when the report has one, else by name (reports saved before trail records existed)
+      SectorService.selectTrail(trailSelect, report.trail, report.trailId);
+      commentsInput.value = report.comments || '';
+      
+      // Handle photos - retrocompat: support both old photoUrl and new photos array
+      if (report.photos && report.photos.length > 0) {
+        photoPicker.setPhotos(report.photos);
+      } else if (report.photoUrl) {
+        // Old format: single photoUrl
+        photoPicker.setPhotos([{
+          url: report.photoUrl,
+          filename: 'photo.jpg',
+          coordinates: report.coordinates || null,
+          timestamp: null
+        }]);
+      } else {
+        photoPicker.clear();
+      }
+      
+      loadedFileUrls = photoPicker.getPhotos().map(p => p.url);
+
+      saveBtn.style.display = 'none';
+      modifyBtn.style.display = '';
+      clearValidation();
+    }
+
+    function resetForm() {
+      currentReportId = null;
+      isNewReport = true;
+      loadedFileUrls = [];
+      reportSelector.value = 'new';
+      setDefaultValues();
+      statusSelect.value = '';
+      SectorService.fillSectors(sectorSelect, sectors, '-- Sélectionner un secteur --');
+      trailSelect.innerHTML = '<option value="">-- Sélectionner d\'abord un secteur --</option>';
+      commentsInput.value = '';
+      photoPicker.clear();
+      clearValidation();
+      saveBtn.style.display = '';
+      modifyBtn.style.display = 'none';
+    }
+
+    async function uploadPhoto(file) {
+      const timestamp = Date.now();
+      const fileName = `signalisations/${currentUser.uid}/${timestamp}_${file.name}`;
+      const ref = storage.ref(fileName);
+      
+      let uploadFile = file;
+      if (file.size > 1024 * 1024) {
+        // Use shared compressImage from utils.js
+        uploadFile = await compressImage(file, 0.7, 1200);
+      }
+      
+      await ref.put(uploadFile);
+      return await ref.getDownloadURL();
+    }
+
+    // Validation
+    function validateForm() {
+      let isValid = true;
+      clearValidation();
+      
+      if (!reportDate.value) { reportDate.classList.add('is-invalid'); isValid = false; }
+      if (!reportTime.value) { reportTime.classList.add('is-invalid'); isValid = false; }
+      
+      const hasStatus = statusSelect.value !== '';
+      const hasPhotos = photoPicker.hasPhotos();
+      if (!hasStatus && !hasPhotos) {
+        statusSelect.classList.add('is-invalid');
+        photoUploadArea.classList.add('is-invalid');
+        showToast('Un statut OU au moins une photo est requis', 'error');
+        isValid = false;
+      }
+      
+      if (!sectorSelect.value) { sectorSelect.classList.add('is-invalid'); isValid = false; }
+      if (!trailSelect.value) { trailSelect.classList.add('is-invalid'); isValid = false; }
+      
+      return isValid;
+    }
+
+    function clearValidation() {
+      [reportDate, reportTime, statusSelect, photoUploadArea, sectorSelect, trailSelect].forEach(el => {
+        if (el) el.classList.remove('is-invalid');
+      });
+    }
+
+    async function handleSubmit(e) {
+      e.preventDefault();
+      if (!isNewReport) return;
+      if (!validateForm()) return;
+      
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Enregistrement...';
+      
+      try {
+        // Upload pending photos
+        const pendingFiles = photoPicker.getPendingFiles();
+        for (const pending of pendingFiles) {
+          const url = await uploadPhoto(pending.file);
+          photoPicker.markAsUploaded(pending.filename, url);
+        }
+        
+        // Get all photos for saving
+        const photos = photoPicker.getUploadedPhotos().map(p => ({
+          url: p.url,
+          filename: p.filename,
+          coordinates: p.coordinates || null,
+          timestamp: p.timestamp ? firebase.firestore.Timestamp.fromDate(p.timestamp) : null
+        }));
+        
+        const chosenTrail = SectorService.readTrail(trailSelect); // { id, name }: id is null for a name-only (old) report
+        const reportData = {
+          network: Network.current(),
+          inspectorId: currentUser.uid,
+          inspectorName: inspectorNameInput.value,
+          status: statusSelect.value || null,
+          statusDisplayName: statusSelect.value ? STATUS_LABELS[statusSelect.value] : null,
+          photos: photos,
+          // Keep coordinates field for first photo (for map markers retrocompat)
+          coordinates: photos.length > 0 && photos[0].coordinates ? photos[0].coordinates : null,
+          sector: sectorSelect.value,
+          sectorDisplayName: SectorService.nameOf(sectors, sectorSelect.value),
+          trail: chosenTrail.name || '',
+          trailId: chosenTrail.id,
+          comments: commentsInput.value.trim() || null,
+          resolved: false,
+          archived: false,
+          adminComments: null,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          modifiedAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+        
+        await db.collection('signalisations').add(reportData);
+        
+        showToast('Rapport enregistré avec succès', 'success');
+        resetForm();
+        loadUserReports();
+        
+      } catch (e) {
+        console.error('Error saving report:', e);
+        showToast('Erreur lors de l\'enregistrement: ' + e.message, 'error');
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Enregistrer';
+      }
+    }
+
+    async function handleModify() {
+      if (!currentReportId) return;
+      if (!validateForm()) return;
+      
+      modifyBtn.disabled = true;
+      modifyBtn.textContent = 'Modification...';
+      
+      try {
+        // Upload pending photos
+        const pendingFiles = photoPicker.getPendingFiles();
+        for (const pending of pendingFiles) {
+          const url = await uploadPhoto(pending.file);
+          photoPicker.markAsUploaded(pending.filename, url);
+        }
+        
+        // Get all photos for saving
+        const photos = photoPicker.getUploadedPhotos().map(p => ({
+          url: p.url,
+          filename: p.filename,
+          coordinates: p.coordinates || null,
+          timestamp: p.timestamp ? firebase.firestore.Timestamp.fromDate(p.timestamp) : null
+        }));
+        
+        const chosenTrail = SectorService.readTrail(trailSelect); // { id, name }
+        const updateData = {
+          status: statusSelect.value || null,
+          statusDisplayName: statusSelect.value ? STATUS_LABELS[statusSelect.value] : null,
+          photos: photos,
+          coordinates: photos.length > 0 && photos[0].coordinates ? photos[0].coordinates : null,
+          sector: sectorSelect.value,
+          sectorDisplayName: SectorService.nameOf(sectors, sectorSelect.value),
+          trail: chosenTrail.name || '',
+          trailId: chosenTrail.id,
+          comments: commentsInput.value.trim() || null,
+          modifiedAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+        
+        // A legacy record keeps its single photo in photoUrl. Once the form has carried it
+        // into photos[] (or the inspector removed it) the old field must go, otherwise a
+        // removed photo comes back when the report is reopened.
+        const saved = userReports.find(r => r.id === currentReportId);
+        if (saved?.photoUrl && loadedFileUrls.includes(saved.photoUrl)) {
+          updateData.photoUrl = firebase.firestore.FieldValue.delete();
+        }
+
+        await db.collection('signalisations').doc(currentReportId).update(updateData);
+
+        // Report saved: delete the files the inspector removed.
+        // Files still used by another of their reports are kept.
+        const keptUrls = photos.map(p => p.url);
+        await PhotoService.deleteRemoved(
+          loadedFileUrls,
+          keptUrls,
+          db.collection('signalisations').where('inspectorId', '==', currentUser.uid),
+          currentReportId
+        );
+        loadedFileUrls = keptUrls;
+        
+        showToast('Rapport modifié avec succès', 'success');
+        loadUserReports();
+        
+      } catch (e) {
+        console.error('Error updating report:', e);
+        showToast('Erreur lors de la modification: ' + e.message, 'error');
+      } finally {
+        modifyBtn.disabled = false;
+        modifyBtn.textContent = 'Modifier';
+      }
+    }
+
+    onFirebaseReady( initSignalisationReport);
+  </script>
+</body>
+</html>

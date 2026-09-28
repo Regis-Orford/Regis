@@ -1,0 +1,235 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is admin or system_admin
+    function isAdmin() {
+      return request.auth != null && 
+             get(/databases/$(database)/documents/inspectors/$(request.auth.uid)).data.role in ['admin', 'system_admin'];
+    }
+    
+    function isSystemAdmin() {
+      return request.auth != null && 
+             get(/databases/$(database)/documents/inspectors/$(request.auth.uid)).data.role == 'system_admin';
+    }
+    
+    // Activities (networks) a user works in: inspectors/{uid}.networks.
+    // Every user document has the field; without it these rules deny (fail closed).
+    function networksOf(uid) {
+      return get(/databases/$(database)/documents/inspectors/$(uid)).data.networks;
+    }
+
+    // Activities added to or removed from a user document by the current write
+    function changedNetworks() {
+      return resource.data.networks.toSet()
+               .difference(request.resource.data.networks.toSet())
+             .union(request.resource.data.networks.toSet()
+               .difference(resource.data.networks.toSet()));
+    }
+
+    // A system_admin can edit any user. An admin can edit users who share one of
+    // their activities (never a system_admin), and can only add or remove
+    // activities they hold themselves. Every user keeps at least one activity.
+    function adminMayUpdateUser() {
+      return isSystemAdmin() ||
+             (isAdmin() &&
+              resource.data.role != 'system_admin' &&
+              request.resource.data.role != 'system_admin' &&
+              request.resource.data.networks.size() > 0 &&
+              resource.data.networks.toSet()
+                .intersection(networksOf(request.auth.uid).toSet()).size() > 0 &&
+              changedNetworks().difference(networksOf(request.auth.uid).toSet()).size() == 0);
+    }
+
+    // ACTIVITY-SCOPED DATA (trails, shelters, inspections, infractions, signalisations).
+    // Each record has a `network` field. Writes need the user to belong to the record's
+    // activity, and a record's activity never changes. Reads are not restricted by activity:
+    // the pages filter what they show (restricting reads would need every query to filter by
+    // network, plus indexes).
+    function recordNetwork(data) {
+      return data.network;
+    }
+
+    // May the signed-in user work in this activity? (a system_admin can in every one)
+    function canWorkIn(network) {
+      return request.auth != null &&
+             (isSystemAdmin() || network in networksOf(request.auth.uid));
+    }
+
+    // The write leaves the record's activity as it was
+    function sameNetwork() {
+      return recordNetwork(request.resource.data) == recordNetwork(resource.data);
+    }
+
+    // PUBLIC ACCESS - For status page
+    // Trails: an inspector's inspection only changes the status fields; everything else
+    // (name, number, kind, difficulty, length, position) is edited by admins (Administration > Sentiers).
+    // The `sector` of a trail (the area the infraction and signalisation forms group it under)
+    // is set by a system_admin only.
+    function sectorUnchanged() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['sector']);
+    }
+
+    match /trails/{document} {
+      allow read: if true;
+      allow update: if canWorkIn(recordNetwork(resource.data)) && sameNetwork() &&
+                       ((isAdmin() && (isSystemAdmin() || sectorUnchanged())) ||
+                        request.resource.data.diff(resource.data).affectedKeys()
+                          .hasOnly(['status', 'lastUpdated', 'lastInspectionId']));
+      allow create: if isAdmin() && canWorkIn(recordNetwork(request.resource.data)) &&
+                       (isSystemAdmin() || !('sector' in request.resource.data));
+      allow delete: if isAdmin() && canWorkIn(recordNetwork(resource.data));
+    }
+
+    match /shelters/{document} {
+      allow read: if true;
+      allow update: if canWorkIn(recordNetwork(resource.data)) && sameNetwork();
+      allow create: if isAdmin() && canWorkIn(recordNetwork(request.resource.data));
+      allow delete: if isAdmin() && canWorkIn(recordNetwork(resource.data));
+    }
+
+    match /inspections/{document} {
+      allow read: if true;
+      allow create: if canWorkIn(recordNetwork(request.resource.data));
+      allow update: if canWorkIn(recordNetwork(resource.data)) && sameNetwork();
+      allow delete: if isAdmin() && canWorkIn(recordNetwork(resource.data));
+    }
+
+    match /trail_inspections/{document} {
+      allow read: if true;
+      allow create: if canWorkIn(recordNetwork(request.resource.data));
+      allow update: if canWorkIn(recordNetwork(resource.data)) && sameNetwork();
+      allow delete: if isAdmin() && canWorkIn(recordNetwork(resource.data));
+    }
+
+    match /shelter_inspections/{document} {
+      allow read: if true;
+      allow create: if canWorkIn(recordNetwork(request.resource.data));
+      allow update: if canWorkIn(recordNetwork(resource.data)) && sameNetwork();
+      allow delete: if isAdmin() && canWorkIn(recordNetwork(resource.data));
+    }
+    
+    // PROTECTED ACCESS
+    match /inspectors/{userId} {
+      allow read: if request.auth != null;
+
+      // Only admins create accounts. Only a system_admin can grant system_admin or
+      // any activity; an admin can only give activities they hold, and at least one.
+      allow create: if isAdmin() &&
+                    (request.resource.data.role != 'system_admin' || isSystemAdmin()) &&
+                    (isSystemAdmin() ||
+                     (request.resource.data.networks.size() > 0 &&
+                      request.resource.data.networks.toSet()
+                        .difference(networksOf(request.auth.uid).toSet()).size() == 0));
+
+      // Admin edits: see adminMayUpdateUser().
+      // Users can only edit their own non-privileged fields (see user-profile.html, theme.js).
+      allow update: if adminMayUpdateUser() ||
+                       (request.auth != null && request.auth.uid == userId &&
+                        request.resource.data.diff(resource.data).affectedKeys()
+                          .hasOnly(['phone', 'preferences']));
+
+      allow delete: if isSystemAdmin();
+    }
+    
+    // SECTORS: the areas the infraction and signalisation forms group trails under
+    // (a trail's `sector` field holds a sector id). Only a system_admin manages sectors.
+    // Sectors are never deleted from the app (records refer to their id).
+    match /sectors/{sectorId} {
+      allow read: if request.auth != null;
+      allow create: if isSystemAdmin();
+      allow update: if isSystemAdmin() &&
+                    request.resource.data.network == resource.data.network;
+      allow delete: if isSystemAdmin();
+    }
+
+    // MAPS: the GPS calibration of each activity's map (maps/{network}: mode, points, width,
+    // height). Everyone signed in reads it (photo positions on the maps); only a system_admin
+    // writes it (Administration > Cartes).
+    match /maps/{network} {
+      allow read: if request.auth != null;
+      allow write: if isSystemAdmin();
+    }
+
+    match /config/{document} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+    
+    match /locations/{document} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+    
+    // INFRACTIONS
+    match /infractions/{infractionId} {
+      allow read: if request.auth != null;
+      allow create: if canWorkIn(recordNetwork(request.resource.data));
+      allow update: if request.auth != null &&
+          (request.auth.uid == resource.data.patrolId || isAdmin()) &&
+          canWorkIn(recordNetwork(resource.data)) && sameNetwork();
+      allow delete: if isAdmin() && canWorkIn(recordNetwork(resource.data));
+    }
+    
+    // SIGNALISATIONS
+    match /signalisations/{signalisationId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null &&
+          get(/databases/$(database)/documents/inspectors/$(request.auth.uid)).data.allowSignalisation == true &&
+          canWorkIn(recordNetwork(request.resource.data));
+      allow update: if request.auth != null &&
+          (request.auth.uid == resource.data.inspectorId || isAdmin()) &&
+          canWorkIn(recordNetwork(resource.data)) && sameNetwork();
+      allow delete: if isAdmin() && canWorkIn(recordNetwork(resource.data));
+    }
+    
+    // REQUESTS
+    match /requests/{requestId} {
+      allow read: if request.auth != null && 
+          (resource.data.createdBy == request.auth.uid || isAdmin());
+      allow create: if request.auth != null;
+      allow update: if request.auth != null && 
+          (resource.data.createdBy == request.auth.uid || isAdmin());
+      allow delete: if isSystemAdmin();
+      
+      match /comments/{commentId} {
+        allow read: if request.auth != null;
+        allow create: if request.auth != null;
+        allow update, delete: if false;
+      }
+    }
+    
+    // NOTIFICATIONS
+    match /notifications/{notificationId} {
+      allow create: if request.auth != null;
+      allow read, update, delete: if false;
+    }
+    
+  }
+}
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read: if true;
+
+      // Images only, max 15 MB
+      allow create, update: if request.auth != null &&
+                            request.resource.size < 15 * 1024 * 1024 &&
+                            request.resource.contentType.matches('image/.*');
+
+      // Admin only: matches record deletion (inspection-history, inspection-admin orphan cleaner)
+      allow delete: if request.auth != null &&
+                    firestore.get(/databases/(default)/documents/inspectors/$(request.auth.uid)).data.role in ['admin', 'system_admin'];
+    }
+
+    // Inspectors can delete files in their own folder: removing a photo while
+    // editing an infraction / signalisation report (PhotoService.deleteRemoved)
+    match /infractions/{userId}/{file=**} {
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+    match /signalisations/{userId}/{file=**} {
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+  }
+}
