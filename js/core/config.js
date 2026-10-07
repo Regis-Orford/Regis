@@ -8,6 +8,36 @@
  * - Firebase config should match your project
  */
 
+// ===== WHERE THE SITE IS HOSTED =====
+// Nothing here depends on the address the site is published at (domain, repository sub-folder,
+// local folder...). The site root is derived from where THIS script was loaded from
+// (<root>/js/core/config.js), and siteUrl() turns any path written from the site root
+// ("index.html", "pages/login.html", "assets/map/x.png") into a URL valid from the current page.
+// Moving the site to another address needs no change to the files.
+const SITE_ROOT_URL = (() => {
+  const own = document.currentScript
+    || [...document.scripts].find(s => /\/js\/core\/config\.js(\?|#|$)/.test(s.src));
+  if (own && own.src) return new URL('../../', own.src).href;
+  // Last resort (script injected without a trace): the folder above "pages/", or the current folder
+  return new URL(window.location.pathname.includes('/pages/') ? '../' : './', window.location.href).href;
+})();
+
+// The relative link from the page at pageUrl to `path` (written from the site root at rootUrl)
+function relativeSiteUrl(rootUrl, pageUrl, path) {
+  const target = new URL(path, rootUrl);
+  const there = target.pathname.split('/');
+  const file = there.pop();
+  const here = new URL('./', pageUrl).pathname.split('/');
+  here.pop(); // the empty part after the trailing slash
+  let common = 0;
+  while (common < here.length && common < there.length && here[common] === there[common]) common++;
+  return '../'.repeat(here.length - common) + [...there.slice(common), file].join('/') + target.search + target.hash;
+}
+
+function siteUrl(path) {
+  return relativeSiteUrl(SITE_ROOT_URL, window.location.href, path);
+}
+
 // ===== BRANDING: the ONE place for the portal's name and logo =====
 // The header logo, the browser tab title and description, the favicon and the login page
 // all read this (see "Apply the branding" at the end of this file). Pages only write their
@@ -39,70 +69,6 @@ const APP_CONFIG = {
   // ===== VERSION =====
   version: new Date().toISOString().split('T')[0].replace(/-/g, ''),
   
-  // ===== ROUTES =====
-  routes: {
-    portal: '/index.html',
-    login: '/pages/login.html',
-    forgotPassword: '/pages/forgot-password.html',
-    userProfile: '/pages/user-profile.html',
-    userManagement: '/pages/user-management.html',
-    // Inspection module
-    inspectionDashboard: '/pages/inspection-dashboard.html',
-    inspectionTrailReport: '/pages/inspection-trail-report.html',
-    inspectionShelterReport: '/pages/inspection-shelter-report.html',
-    inspectionHistory: '/pages/inspection-history.html',
-    inspectionAdmin: '/pages/inspection-admin.html',
-    // Infraction module
-    infractionReport: '/pages/infraction-report.html',
-    infractionAdmin: '/pages/infraction-admin.html',
-    // Signalisation module
-    signalisationReport: '/pages/signalisation-report.html',
-    signalisationResume: '/pages/signalisation-resume.html',
-    signalisationAdmin: '/pages/signalisation-admin.html',
-    // Support (requests)
-    support: '/pages/support.html',
-    // Public
-    publicStatus: '/pages/public-status.html'
-  },
-
-  // ===== MODULE DEFINITIONS =====
-  modules: {
-    portal: {
-      id: 'portal',
-      name: 'Portail',
-      icon: '🏠',
-      color: 'portal'
-    },
-    inspection: {
-      id: 'inspection',
-      name: 'Inspection',
-      icon: '🔍',
-      color: 'inspection',
-      permission: 'allowInspection'
-    },
-    infraction: {
-      id: 'infraction',
-      name: 'Infraction',
-      icon: '🚨',
-      color: 'infraction',
-      permission: 'allowInfraction'
-    },
-    signalisation: {
-      id: 'signalisation',
-      name: 'Signalisation',
-      icon: '🚧',
-      color: 'signalisation',
-      permission: 'allowSignalisation'
-    },
-    request: {
-      id: 'request',
-      name: 'Demandes',
-      icon: '🎫',
-      color: 'request',
-      permission: null  // Accessible to all authenticated users
-    }
-  },
-
   // ===== MAPS =====
   // Each map: image (path from the site root) and its size in pixels. Trail coordinates are
   // pixels on that image, so keep its size once trails are placed on it. The GPS calibration
@@ -111,11 +77,22 @@ const APP_CONFIG = {
   // The ids 'ski' and 'bike' are also the ids of the calibrations saved before there were
   // several maps: do not rename them.
   //   Ski-Downhill_Map_web.jpg is Ski-Downhill_Map.png (same 1670 x 736 px) as a lighter JPG.
+  // Every kind of trail has a status map (trailKinds.<kind>.map: trail markers, open/closed) and
+  // a geolocalisation map (trailKinds.<kind>.geoMap: GPS-calibrated, report/photo locations only -
+  // never has trail status markers placed on it). The two are always separate images, even where
+  // they show the same area, so a geolocalisation map's calibration is never disturbed by trail
+  // marker edits and vice versa.
   maps: {
-    'ski':          { name: 'Ski - Montée',   icon: '⛷️', image: 'assets/map/Ski-Touring_Map.png',      width: 800,  height: 700 },
-    'ski-downhill': { name: 'Ski - Descente', icon: '🎿', image: 'assets/map/Ski-Downhill_Map_web.jpg', width: 1670, height: 736 },
+    'ski':              { name: 'Ski - Montée (statut)',   icon: '⛷️', image: 'assets/map/Ski-Touring_Map.png',                          width: 800,  height: 700 },
+    // Ski-Touring_geolocalisation_Map_web.jpg is Ski-Touring_geolocalisation_Map.png (same 800 x 700 px) as a lighter JPG.
+    'ski-geo':          { name: 'Ski - Montée (géolocalisation)', icon: '📍', image: 'assets/map/Ski-Touring_geolocalisation_Map_web.jpg', width: 800,  height: 700 },
+    // Ski-Downhill_Map_web.jpg is Ski-Downhill_Map.png (same 1670 x 736 px) as a lighter JPG.
+    'ski-downhill':     { name: 'Ski - Descente (statut)', icon: '🎿', image: 'assets/map/Ski-Downhill_Map_web.jpg',                       width: 1670, height: 736 },
+    // Ski-Downhill_Geolocalisation-map_web.jpg is Ski-Downhill_Geolocalisation-map.png (same 1404 x 932 px) as a lighter JPG.
+    'ski-downhill-geo': { name: 'Ski - Descente (géolocalisation)', icon: '📍', image: 'assets/map/Ski-Downhill_Geolocalisation-map_web.jpg', width: 1404, height: 932 },
     // The illustrated map (Bike_Map.jpg, not to scale) resized to 1600 px wide
-    'bike':         { name: 'Vélo',           icon: '🚵', image: 'assets/map/Bike_Map_web.jpg',         width: 1600, height: 919 }
+    'bike':             { name: 'Vélo (statut)',            icon: '🚵', image: 'assets/map/Bike_Map_web.jpg',                             width: 1600, height: 919 },
+    'bike-geo':         { name: 'Vélo (géolocalisation)',   icon: '📍', image: 'assets/map/Bike_Geolocalisation_Map_web.jpg',              width: 1600, height: 919 }
   },
 
   // ===== NETWORKS (activities) =====
@@ -124,8 +101,11 @@ const APP_CONFIG = {
   // and the network used when no activity is in season (see js/core/network.js ofSeason).
   //
   // Per network:
-  //   seasonMonths  months (1-12) when this network is the default one; the network with no
-  //                 seasonMonths is the default the rest of the year (see js/core/network.js)
+  //   season        { from: {month, day}, to: {month, day} } - THE definition of the activity's season,
+  //                 used everywhere: which activity opens by default on a given date (header, public
+  //                 status page), the window the dashboard and history read, the seasons of the admin
+  //                 statistics, the default start date of the data export. A season may run over New
+  //                 Year (ski: 1 Nov to 30 Apr). See js/core/network.js (seasonRange, ofSeason).
   //   map           id of the network's main map (in maps above), the one behind the inspection
   //                 markers and the report locations. Trails of another kind can use another
   //                 map: see trailKinds.<kind>.map
@@ -138,20 +118,16 @@ const APP_CONFIG = {
   //   features      what the network has: shelters, snowCondition (ski-only inspection field)
   //   infractions   the fault types and practices offered on the infraction form (id -> label)
   //   publicTitle   what the public status page calls this activity's trails
-  //   statsSince    month/day the inspection statistics start counting each year
-  //   mapCenter     GPS centre of the activity's map (distance-from-centre photo check); none = skipped.
-  //                 Ski and bike use the same point: both maps cover Mont Orford.
   networks: {
     ski: {
       id: 'ski', name: 'Ski', icon: '⛷️',
+      season: { from: { month: 11, day: 1 }, to: { month: 4, day: 30 } }, // 1 November to 30 April
       map: 'ski',
       trailKinds: ['uphill', 'downhill', 'lift'],
-      reportMaps: ['ski-downhill', 'ski'],
+      reportMaps: ['ski-downhill-geo', 'ski-geo'],
       inspectionKinds: ['uphill', 'downhill'],
       features: { shelters: true, snowCondition: true },
       publicTitle: 'État des sentiers de randonnée alpine',
-      statsSince: { month: 9, day: 1 }, // 1 September
-      mapCenter: { lat: 45.310, lon: -72.230 },
       infractions: {
         faults: {
           'downhill': 'Downhill',
@@ -167,18 +143,19 @@ const APP_CONFIG = {
     },
     bike: {
       id: 'bike', name: 'Vélo', icon: '🚵',
-      seasonMonths: [5, 6, 7, 8, 9, 10], // 1 May to 31 October
+      season: { from: { month: 5, day: 1 }, to: { month: 10, day: 31 } }, // 1 May to 31 October
       map: 'bike',
       trailKinds: ['bike'],
-      reportMaps: ['bike'],
+      reportMaps: ['bike-geo'],
       inspectionKinds: ['bike'],
       features: { shelters: false, snowCondition: false },
       publicTitle: 'État des sentiers de vélo de montagne',
-      statsSince: { month: 5, day: 1 }, // 1 May
-      mapCenter: { lat: 45.310, lon: -72.230 }, // same point as ski: both maps cover Mont Orford
-      // TO COMPLETE: the bike fault types and practices (placeholders for now)
       infractions: {
-        faults: { 'autres': 'Autres (voir commentaire)' },
+        faults: {
+          'acces-non-accredite': 'Utilise une piste sans droit d\'accès accrédité',
+          'deterioration': 'Détériore les pistes / signalisation',
+          'autres': 'Autre (voir commentaires)'
+        },
         practices: { 'velo': 'Vélo', 'autres': 'Autres' }
       }
     }
@@ -187,7 +164,7 @@ const APP_CONFIG = {
 
   // The earliest season the admin Statistiques tab's season navigator can go back to, for every
   // activity (winter 2025-2026: when the app went live - nothing meaningful exists before it).
-  // A season (see pages/inspection-admin.html, 12 months anchored on a network's statsSince) is
+  // A season (see pages/inspection-admin.html and each network's season above) is
   // reachable only if it STARTS on or after this date; "Previous" disables itself once going back
   // one more season would start earlier than this.
   earliestSeasonStart: { year: 2025, month: 9, day: 1 },
@@ -202,20 +179,22 @@ const APP_CONFIG = {
   // A trail saved before `kind` existed is uphill (bike network: bike); one saved with the
   // old difficulty easy / medium / hard is green / blue / black (see js/services/trail-service.js).
   // idPrefix: new trails are numbered trail_12, run_1, bike_3...
-  // map: the map (in maps above) the trails of this kind are placed on.
+  // map: the map (in maps above) the trails of this kind are placed on (status markers, open/closed).
+  // geoMap: the map (GPS-calibrated) this kind's photo locations (inspection dashboard/history) are
+  // placed on, when different from `map`. Falls back to `map` when absent (see TrailService.geoMapIdOf).
   // issues: the checklist offered by the inspection form's "Problèmes identifiés" section (an
   // inspector can also type a free-text "other" issue on top of it). No entry = no checklist
   // (lift: never inspected, see inspectionKinds).
   trailKinds: {
-    uphill:   { label: 'Montée',   idPrefix: 'trail', map: 'ski',
+    uphill:   { label: 'Montée',   idPrefix: 'trail', map: 'ski', geoMap: 'ski-geo',
       issues: ['Glace sur le sentier', 'Érosion du sentier', 'Arbres/branches tombés', 'Obstacles sur le sentier', 'Signalisation manquante/endommagée'] },
-    downhill: { label: 'Descente', idPrefix: 'run',   map: 'ski-downhill',
+    downhill: { label: 'Descente', idPrefix: 'run',   map: 'ski-downhill', geoMap: 'ski-downhill-geo',
       issues: ['Plaques de glace / verglas', 'Manque de neige / roches exposées', 'Arbres/branches tombés sur la piste', 'Filet de sécurité endommagé', 'Balisage de piste manquant/endommagé'] },
-    bike:     { label: 'Vélo',     idPrefix: 'bike',  map: 'bike',
+    bike:     { label: 'Vélo',     idPrefix: 'bike',  map: 'bike', geoMap: 'bike-geo',
       issues: ['Ornières / érosion importante', 'Arbres/branches tombés sur le sentier', 'Pont/passerelle endommagé', 'Obstacle technique endommagé (saut, module, virage relevé)', 'Signalisation manquante/endommagée', 'Boue excessive / sentier détrempé'] },
     // Lifts (Remontées mécaniques): listed so reports can be filed against them; no difficulty,
     // never inspected (see inspectionKinds)
-    lift:     { label: 'Remontée', idPrefix: 'lift',  map: 'ski-downhill' }
+    lift:     { label: 'Remontée', idPrefix: 'lift',  map: 'ski-downhill', geoMap: 'ski-downhill-geo' }
   },
   difficulties: {
     'green':        { label: 'Verte',        icon: '🟢' },
@@ -270,7 +249,7 @@ const APP_CONFIG = {
         { id: 'inspection-dashboard', label: 'Tableau de bord', icon: '📊', href: 'pages/inspection-dashboard.html' },
         { id: 'inspection-trail-report', label: 'Rapport sentier', icon: '📝', href: 'pages/inspection-trail-report.html' },
         { id: 'inspection-shelter-report', label: 'Rapport abri', icon: '📝', href: 'pages/inspection-shelter-report.html', requires: 'shelters' },
-        { id: 'inspection-history', label: 'Historique', icon: '📋', href: 'pages/inspection-history.html' },
+        { id: 'inspection-history', label: 'Gestion', icon: '📋', href: 'pages/inspection-history.html' },
         { id: 'inspection-admin', label: 'Admin', icon: '⚙️', href: 'pages/inspection-admin.html', admin: true }
       ]
     },
@@ -278,15 +257,25 @@ const APP_CONFIG = {
       title: 'Infractions',
       items: [
         { id: 'infraction-report', label: 'Rapport', icon: '📝', href: 'pages/infraction-report.html' },
-        { id: 'infraction-admin', label: 'Gestion', icon: '📋', href: 'pages/infraction-admin.html', admin: true }
+        { id: 'infraction-admin', label: 'Gestion', icon: '📋', href: 'pages/infraction-admin.html', admin: true },
+        { id: 'infraction-stats', label: 'Admin', icon: '⚙️', href: 'pages/infraction-stats.html', admin: true }
       ]
     },
     signalisation: {
-      title: 'Signalisation',
+      title: 'Signalisations',
       items: [
+        { id: 'signalisation-resume', label: 'Tableau de bord', icon: '🗺️', href: 'pages/signalisation-resume.html' },
         { id: 'signalisation-report', label: 'Rapport', icon: '📝', href: 'pages/signalisation-report.html' },
-        { id: 'signalisation-resume', label: 'Résumé', icon: '🗺️', href: 'pages/signalisation-resume.html' },
-        { id: 'signalisation-admin', label: 'Gestion', icon: '📋', href: 'pages/signalisation-admin.html', admin: true }
+        { id: 'signalisation-admin', label: 'Gestion', icon: '📋', href: 'pages/signalisation-admin.html', admin: true },
+        { id: 'signalisation-stats', label: 'Admin', icon: '⚙️', href: 'pages/signalisation-stats.html', admin: true }
+      ]
+    },
+    maintenance: {
+      title: 'Entretien',
+      items: [
+        { id: 'maintenance-report', label: 'Journal', icon: '📝', href: 'pages/maintenance-report.html' },
+        { id: 'maintenance-admin', label: 'Gestion', icon: '📋', href: 'pages/maintenance-admin.html', admin: true },
+        { id: 'maintenance-stats', label: 'Admin', icon: '⚙️', href: 'pages/maintenance-stats.html', admin: true }
       ]
     },
     support: {
@@ -302,12 +291,6 @@ const APP_CONFIG = {
       mobileProfile: true,
       items: []
     }
-  },
-
-  // ===== DEFAULT SETTINGS =====
-  defaults: {
-    theme: 'light',
-    itemsPerPage: 25
   }
 };
 
@@ -315,8 +298,6 @@ const APP_CONFIG = {
 Object.freeze(APP_CONFIG);
 Object.freeze(APP_CONFIG.branding);
 Object.freeze(APP_CONFIG.firebase);
-Object.freeze(APP_CONFIG.routes);
-Object.freeze(APP_CONFIG.modules);
 Object.freeze(APP_CONFIG.nav);
 Object.freeze(APP_CONFIG.maps);
 Object.freeze(APP_CONFIG.networks);
@@ -325,7 +306,6 @@ Object.freeze(APP_CONFIG.trailKinds);
 Object.freeze(APP_CONFIG.difficulties);
 Object.freeze(APP_CONFIG.difficultyScales);
 Object.freeze(APP_CONFIG.labels);
-Object.freeze(APP_CONFIG.defaults);
 
 // ===== Apply the branding to the page (browser only) =====
 // - <title>: "<name> - <page's own text>"; <meta name="description">: "<page's own text> - <name>"
@@ -335,9 +315,6 @@ Object.freeze(APP_CONFIG.defaults);
 (function applyBranding() {
   if (typeof document === 'undefined') return;
   const brand = APP_CONFIG.branding;
-
-  // A path from the site root, as a URL valid from the current page
-  const siteUrl = path => (window.location.pathname.includes('/pages/') ? '../' + path : path);
 
   const title = document.querySelector('title');
   if (title && !title.hasAttribute('data-no-brand') && !title.textContent.includes(brand.name)) {

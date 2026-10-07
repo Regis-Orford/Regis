@@ -78,35 +78,47 @@ service cloud.firestore {
                           .hasOnly(['status', 'lastUpdated', 'lastInspectionId']));
       allow create: if isAdmin() && canWorkIn(recordNetwork(request.resource.data)) &&
                        (isSystemAdmin() || !('sector' in request.resource.data));
-      allow delete: if isAdmin() && canWorkIn(recordNetwork(resource.data));
+      // Never deleted from the app: a trail that is gone is hidden (archived: true), its history stays
+      allow delete: if false;
     }
 
     match /shelters/{document} {
       allow read: if true;
-      allow update: if canWorkIn(recordNetwork(resource.data)) && sameNetwork();
+      // Admins only (hide / restore: archived). Inspectors never change a shelter.
+      allow update: if isAdmin() && canWorkIn(recordNetwork(resource.data)) && sameNetwork();
       allow create: if isAdmin() && canWorkIn(recordNetwork(request.resource.data));
-      allow delete: if isAdmin() && canWorkIn(recordNetwork(resource.data));
+      // Never deleted from the app: a shelter that is gone is hidden (archived: true), its history stays
+      allow delete: if false;
     }
 
     match /inspections/{document} {
       allow read: if true;
       allow create: if canWorkIn(recordNetwork(request.resource.data));
       allow update: if canWorkIn(recordNetwork(resource.data)) && sameNetwork();
-      allow delete: if isAdmin() && canWorkIn(recordNetwork(resource.data));
+      // Deleting a record is reserved to the system admin (admins archive / correct instead)
+      allow delete: if isSystemAdmin();
     }
 
     match /trail_inspections/{document} {
       allow read: if true;
       allow create: if canWorkIn(recordNetwork(request.resource.data));
-      allow update: if canWorkIn(recordNetwork(resource.data)) && sameNetwork();
-      allow delete: if isAdmin() && canWorkIn(recordNetwork(resource.data));
+      // Only the inspector who made it, or an admin (e.g. to correct a photo's position)
+      allow update: if request.auth != null &&
+          (request.auth.uid == resource.data.inspector_id || isAdmin()) &&
+          canWorkIn(recordNetwork(resource.data)) && sameNetwork();
+      // Deleting a record is reserved to the system admin (admins archive / correct instead)
+      allow delete: if isSystemAdmin();
     }
 
     match /shelter_inspections/{document} {
       allow read: if true;
       allow create: if canWorkIn(recordNetwork(request.resource.data));
-      allow update: if canWorkIn(recordNetwork(resource.data)) && sameNetwork();
-      allow delete: if isAdmin() && canWorkIn(recordNetwork(resource.data));
+      // Only the inspector who made it, or an admin (e.g. to correct a photo's position)
+      allow update: if request.auth != null &&
+          (request.auth.uid == resource.data.inspector_id || isAdmin()) &&
+          canWorkIn(recordNetwork(resource.data)) && sameNetwork();
+      // Deleting a record is reserved to the system admin (admins archive / correct instead)
+      allow delete: if isSystemAdmin();
     }
     
     // PROTECTED ACCESS
@@ -168,7 +180,8 @@ service cloud.firestore {
       allow update: if request.auth != null &&
           (request.auth.uid == resource.data.patrolId || isAdmin()) &&
           canWorkIn(recordNetwork(resource.data)) && sameNetwork();
-      allow delete: if isAdmin() && canWorkIn(recordNetwork(resource.data));
+      // Deleting a record is reserved to the system admin (admins archive / correct instead)
+      allow delete: if isSystemAdmin();
     }
     
     // SIGNALISATIONS
@@ -180,9 +193,49 @@ service cloud.firestore {
       allow update: if request.auth != null &&
           (request.auth.uid == resource.data.inspectorId || isAdmin()) &&
           canWorkIn(recordNetwork(resource.data)) && sameNetwork();
-      allow delete: if isAdmin() && canWorkIn(recordNetwork(resource.data));
+      // Deleting a record is reserved to the system admin (admins archive / correct instead)
+      allow delete: if isSystemAdmin();
     }
     
+    // MAINTENANCE LOGS: a trail builder's own daily work log (bike network). One doc per
+    // builder per day, editable by its owner throughout the day, same shape as infractions/
+    // signalisations. builderId must be the writer's own uid (this is explicitly "my log",
+    // unlike infractions/signalisations which don't enforce who patrolId/inspectorId names).
+    match /maintenance_logs/{logId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null &&
+          get(/databases/$(database)/documents/inspectors/$(request.auth.uid)).data.allowMaintenance == true &&
+          canWorkIn(recordNetwork(request.resource.data)) &&
+          request.resource.data.builderId == request.auth.uid;
+      allow update: if request.auth != null &&
+          (request.auth.uid == resource.data.builderId || isAdmin()) &&
+          canWorkIn(recordNetwork(resource.data)) && sameNetwork();
+      // Deleting a record is reserved to the system admin (admins archive / correct instead)
+      allow delete: if isSystemAdmin();
+    }
+
+    // VOLUNTEERS: self-registration from the standalone QR page (maintenance-volunteer-register.html).
+    // No login there, so this is the app's only public write - deliberately narrow: create-only,
+    // closed field set, typed/bounded, agreement must be accepted, createdAt must be the server
+    // clock (blocks a scripted client from backdating/spoofing). Read is limited to signed-in
+    // users so the maintenance log's volunteer picker can list names. An admin can delete a
+    // registration (Administration > Bénévoles) once it is no longer needed for the season;
+    // maintenance_logs store the volunteer's name directly (volunteerNames), not a reference to
+    // this collection, so deleting one here never affects a past log. Nobody can update one.
+    match /volunteers/{volunteerId} {
+      allow read: if request.auth != null;
+      allow update: if false;
+      allow delete: if isAdmin() && canWorkIn(recordNetwork(resource.data));
+      allow create: if
+          request.resource.data.keys().hasOnly(['nom', 'prenom', 'network', 'agreementAccepted', 'createdAt']) &&
+          request.resource.data.keys().hasAll(['nom', 'prenom', 'network', 'agreementAccepted', 'createdAt']) &&
+          request.resource.data.nom is string && request.resource.data.nom.size() > 0 && request.resource.data.nom.size() <= 100 &&
+          request.resource.data.prenom is string && request.resource.data.prenom.size() > 0 && request.resource.data.prenom.size() <= 100 &&
+          request.resource.data.network == 'bike' &&
+          request.resource.data.agreementAccepted == true &&
+          request.resource.data.createdAt == request.time;
+    }
+
     // REQUESTS
     match /requests/{requestId} {
       allow read: if request.auth != null && 
@@ -208,6 +261,10 @@ service cloud.firestore {
   }
 }
 
+// ===== CLOUD STORAGE RULES =====
+// Paste THIS PART (from the next line) into Firebase console > Storage > Rules, including the
+// rules_version line: listing files (the orphan clean-up in the Admin pages) only works with version 2.
+rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
     match /{allPaths=**} {
@@ -218,9 +275,9 @@ service firebase.storage {
                             request.resource.size < 15 * 1024 * 1024 &&
                             request.resource.contentType.matches('image/.*');
 
-      // Admin only: matches record deletion (inspection-history, inspection-admin orphan cleaner)
+      // System admin only: matches record deletion (inspection-history, inspection-admin orphan cleaner)
       allow delete: if request.auth != null &&
-                    firestore.get(/databases/(default)/documents/inspectors/$(request.auth.uid)).data.role in ['admin', 'system_admin'];
+                    firestore.get(/databases/(default)/documents/inspectors/$(request.auth.uid)).data.role == 'system_admin';
     }
 
     // Inspectors can delete files in their own folder: removing a photo while
@@ -229,6 +286,9 @@ service firebase.storage {
       allow delete: if request.auth != null && request.auth.uid == userId;
     }
     match /signalisations/{userId}/{file=**} {
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+    match /maintenance/{userId}/{file=**} {
       allow delete: if request.auth != null && request.auth.uid == userId;
     }
   }

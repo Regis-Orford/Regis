@@ -56,7 +56,12 @@
       background: rgba(217, 119, 6, 0.15);
       border-color: #d97706;
     }
-    
+
+    .access-badge--clickable.is-active.access-badge--maintenance {
+      background: rgba(22, 101, 52, 0.15);
+      border-color: #166534;
+    }
+
     /* Activity (network) badges: icon + name, same on/off look as the app badges */
     .access-badge--clickable.access-badge--network {
       width: auto;
@@ -86,6 +91,18 @@
 
     /* Sectors tab */
     
+    /* Pagination of the users list (same look as Inspections > Gestion) */
+    .page-size-select { display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; }
+    .pagination-container { display: flex; align-items: center; justify-content: space-between; padding: 1rem 1.25rem; border-top: 1px solid var(--theme-border); flex-wrap: wrap; gap: 1rem; }
+    .pagination-info { font-size: 0.875rem; color: var(--theme-text-secondary); }
+    .pagination { display: flex; gap: 0.25rem; }
+    .page-btn { min-width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--theme-border); border-radius: var(--radius-md); background: var(--theme-surface); color: var(--theme-text); cursor: pointer; font-size: 0.875rem; transition: all 0.15s; }
+    .page-btn:hover:not(:disabled) { border-color: var(--theme-accent); color: var(--theme-accent); }
+    .page-btn.active { background: var(--theme-accent); border-color: var(--theme-accent); color: white; }
+    .page-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .page-ellipsis { display: flex; align-items: center; padding: 0 0.25rem; color: var(--theme-text-secondary); }
+    @media (max-width: 768px) { .pagination-container { flex-direction: column; align-items: center; } }
+
     /* Tab styles */
     .admin-tabs {
       display: flex;
@@ -124,6 +141,15 @@
       display: block;
     }
     
+    /* Liens et astuces tab */
+    .links-card { margin-bottom: var(--space-md); }
+    .links-row { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+    .links-url { font-family: monospace; font-size: 0.9375rem; word-break: break-all; color: var(--theme-accent); }
+    .links-qr { display: flex; align-items: flex-start; gap: var(--space-lg); flex-wrap: wrap; }
+    .links-qr__image { width: 220px; height: 220px; background: #fff; border: 1px solid var(--theme-border); border-radius: var(--radius-md); padding: 0.5rem; }
+    .links-qr__image svg { width: 100%; height: 100%; display: block; }
+    .links-qr__side { display: flex; flex-direction: column; gap: 0.75rem; align-items: flex-start; flex: 1; min-width: 220px; }
+
     /* Export section styling */
     .data-export-section {
       background: var(--theme-surface);
@@ -311,17 +337,20 @@
       <button class="admin-tabs__btn is-active" data-tab="users" onclick="switchTab('users')">
         👥 Utilisateurs
       </button>
-      <button class="admin-tabs__btn" data-tab="trails" onclick="switchTab('trails')">
+      <button class="admin-tabs__btn" data-tab="volunteers" id="volunteers-tab-btn" onclick="switchTab('volunteers')" style="display: none;">
+        🙋 Bénévoles
+      </button>
+      <button class="admin-tabs__btn" data-tab="trails" id="trails-tab-btn" onclick="switchTab('trails')" style="display: none;">
         🧭 Sentiers
       </button>
       <button class="admin-tabs__btn" data-tab="maps" id="maps-tab-btn" onclick="switchTab('maps')" style="display: none;">
         📍 Cartes
       </button>
-      <button class="admin-tabs__btn" data-tab="import" onclick="switchTab('import')">
-        📥 Import
-      </button>
-      <button class="admin-tabs__btn" data-tab="data" onclick="switchTab('data')">
+      <button class="admin-tabs__btn" data-tab="data" id="data-tab-btn" onclick="switchTab('data')" style="display: none;">
         📦 Données
+      </button>
+      <button class="admin-tabs__btn" data-tab="links" onclick="switchTab('links')">
+        💡 Liens et astuces
       </button>
     </div>
 
@@ -373,6 +402,15 @@
             <select class="form-select form-select--sm" id="filter-network" style="width: auto;">
               <option value="">Toutes les activités</option>
             </select>
+            <div class="page-size-select">
+              <label for="users-page-size">Afficher:</label>
+              <select class="form-select form-select--sm" id="users-page-size" style="width: auto;">
+                <option value="10">10</option>
+                <option value="25" selected>25</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+              </select>
+            </div>
             <button class="btn btn-primary" onclick="openAddUserModal()">
               <span>➕</span>
               <span>Ajouter</span>
@@ -397,6 +435,11 @@
           </table>
         </div>
 
+        <div class="pagination-container" id="users-pagination" style="display: none;">
+          <div class="pagination-info" id="users-pagination-info"></div>
+          <div class="pagination" id="users-pagination-buttons"></div>
+        </div>
+
         <div class="empty-state" id="empty-state" style="display: none;">
           <div class="empty-state__icon">👥</div>
           <h3 class="empty-state__title">Aucun utilisateur trouvé</h3>
@@ -406,6 +449,119 @@
         <div class="loading-state" id="table-loading">
           <div class="loading-spinner"></div>
           <p class="loading-text">Chargement des utilisateurs...</p>
+        </div>
+      </div>
+
+      <!-- Bulk import (CSV) -->
+      <div class="data-export-section mt-6" id="import-section">
+        <div class="data-export-section__header">
+          <span>📥</span>
+          <h3>Importation en lot</h3>
+        </div>
+        <p class="data-export-section__description">
+          Importez plusieurs utilisateurs à partir d'un fichier CSV. Colonnes obligatoires :
+          <strong>name, email, password</strong>. Colonnes optionnelles :
+          <strong>role</strong> (<code>inspector</code> par défaut, ou <code>admin</code>),
+          <strong>phone</strong>,
+          <strong>allowInspection</strong> (vrai par défaut),
+          <strong>allowInfraction</strong>, <strong>allowSignalisation</strong>, <strong>allowMaintenance</strong> (faux par défaut ; valeurs <code>true</code> ou <code>false</code>),
+          <strong>networks</strong> : activités séparées par « | », par exemple <code>ski|bike</code> (sans cette colonne, l'utilisateur reçoit l'activité par défaut : ski).
+          Les utilisateurs importés sont créés actifs.
+        </p>
+
+        <div class="form-group">
+          <label class="form-label" for="csv-file">Fichier CSV</label>
+          <input type="file" class="form-input" id="csv-file" accept=".csv" onchange="handleCsvSelect(event)">
+          <span class="form-hint">Le modèle ci-dessous montre toutes les colonnes acceptées.</span>
+        </div>
+
+        <!-- CSV Preview -->
+        <div id="csv-preview" style="display: none;" class="mt-4">
+          <div class="data-export-section__header">
+            <span>👁️</span>
+            <h4>Aperçu (<span id="csv-count">0</span> utilisateurs)</h4>
+          </div>
+          <div class="data-table__body" style="max-height: 300px; overflow-y: auto;">
+            <table class="table table--sm">
+              <thead>
+                <tr>
+                  <th>Nom</th>
+                  <th>Email</th>
+                  <th>Rôle</th>
+                  <th>Activités</th>
+                  <th>Accès</th>
+                </tr>
+              </thead>
+              <tbody id="csv-preview-tbody"></tbody>
+            </table>
+          </div>
+          
+          <div class="export-form-row mt-4">
+            <button class="btn btn-primary" id="start-import-btn" onclick="startBulkImport()" disabled>
+              <span>🚀</span>
+              <span>Démarrer l'importation</span>
+            </button>
+            <button class="btn btn-secondary" id="cancel-import-btn" onclick="cancelBulkImport()" style="display: none;">
+              <span>❌</span>
+              <span>Annuler</span>
+            </button>
+          </div>
+
+          <!-- Progress -->
+          <div id="import-progress" style="display: none;" class="mt-4">
+            <div class="form-label">Progression</div>
+            <div style="background: var(--theme-border); border-radius: var(--radius-md); height: 8px; overflow: hidden;">
+              <div id="import-progress-bar" style="background: var(--theme-accent); height: 100%; width: 0%; transition: width 0.3s;"></div>
+            </div>
+            <p id="import-progress-text" class="form-hint mt-2">0 / 0</p>
+          </div>
+        </div>
+
+        <!-- Import Results -->
+        <div id="import-results" style="display: none;" class="mt-4">
+          <div class="quick-stats">
+            <div class="quick-stat">
+              <div class="quick-stat__icon">✅</div>
+              <div class="quick-stat__content">
+                <div class="quick-stat__value" id="import-success-count">0</div>
+                <div class="quick-stat__label">Créés</div>
+              </div>
+            </div>
+            <div class="quick-stat">
+              <div class="quick-stat__icon">⏭️</div>
+              <div class="quick-stat__content">
+                <div class="quick-stat__value" id="import-skipped-count">0</div>
+                <div class="quick-stat__label">Ignorés (doublons)</div>
+              </div>
+            </div>
+            <div class="quick-stat">
+              <div class="quick-stat__icon">❌</div>
+              <div class="quick-stat__content">
+                <div class="quick-stat__value" id="import-error-count">0</div>
+                <div class="quick-stat__label">Erreurs</div>
+              </div>
+            </div>
+          </div>
+          
+          <div id="import-errors-list" style="display: none;" class="mt-4">
+            <h5 style="color: var(--color-danger);">Détails des erreurs :</h5>
+            <ul id="import-errors-ul" style="font-size: 0.875rem; color: var(--theme-text-secondary);"></ul>
+          </div>
+        </div>
+
+        <!-- Sample CSV Template -->
+        <div class="mt-6" style="padding-top: var(--space-lg); border-top: 1px solid var(--theme-border);">
+          <div class="data-export-section__header">
+            <span>📄</span>
+            <h4>Modèle CSV</h4>
+          </div>
+          <p class="data-export-section__description">
+            Téléchargez un modèle CSV pour voir le format attendu.
+          </p>
+          <button class="btn btn-secondary" onclick="downloadCsvTemplate()">
+            <span>⬇️</span>
+            <span>Télécharger le modèle</span>
+          </button>
         </div>
       </div>
 
@@ -427,6 +583,52 @@
             <span>⬇️</span>
             <span>Exporter utilisateurs</span>
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: VOLUNTEERS (bike network) -->
+    <div class="admin-tab-content" id="volunteers-tab">
+      <div class="data-export-section">
+        <div class="data-export-section__header">
+          <span>🙋</span>
+          <h3>Bénévoles inscrits</h3>
+        </div>
+        <p class="data-export-section__description">
+          Bénévoles inscrits via la page d'inscription dédiée (réseau vélo). Supprimer un bénévole ici
+          ne modifie pas les journaux d'entretien déjà enregistrés : son nom y est copié, pas lié à cette liste.
+        </p>
+
+        <div style="display:flex; gap:0.75rem; align-items:center; margin-bottom:0.75rem; flex-wrap:wrap;">
+          <button type="button" class="btn btn-danger btn-sm" id="delete-selected-volunteers-btn" disabled>🗑️ Supprimer la sélection</button>
+          <button type="button" class="btn btn-danger btn-sm" id="delete-all-volunteers-btn">🗑️ Supprimer tout</button>
+          <button type="button" class="btn btn-secondary btn-sm" id="refresh-volunteers-btn">🔄 Actualiser</button>
+          <span id="volunteers-count" style="font-size:0.85rem; color:var(--theme-text-secondary);"></span>
+        </div>
+
+        <div class="data-table__body">
+          <table class="table table--hover table--responsive" id="volunteers-table">
+            <thead>
+              <tr>
+                <th style="width:2.5rem;"><input type="checkbox" id="volunteers-select-all"></th>
+                <th>Nom</th>
+                <th>Prénom</th>
+                <th>Date d'inscription</th>
+              </tr>
+            </thead>
+            <tbody id="volunteers-tbody"></tbody>
+          </table>
+        </div>
+
+        <div class="empty-state" id="volunteers-empty-state" style="display: none;">
+          <div class="empty-state__icon">🙋</div>
+          <h3 class="empty-state__title">Aucun bénévole inscrit</h3>
+          <p class="empty-state__description">Personne ne s'est encore inscrit via la page dédiée.</p>
+        </div>
+
+        <div class="loading-state" id="volunteers-loading">
+          <div class="loading-spinner"></div>
+          <p class="loading-text">Chargement des bénévoles...</p>
         </div>
       </div>
     </div>
@@ -475,7 +677,7 @@
         </div>
 
         <!-- System admin: sectors -->
-        <details class="trail-panel" id="sector-panel" hidden>
+        <details class="trail-panel" id="sector-panel">
           <summary>Secteurs de cette activité</summary>
           <div class="trail-table-wrap">
             <table class="trail-table">
@@ -489,8 +691,19 @@
           </div>
         </details>
 
+        <!-- Shelters (activities that have them): hidden, never deleted -->
+        <details class="trail-panel" id="shelter-panel" hidden>
+          <summary>Abris de cette activité</summary>
+          <div class="trail-table-wrap">
+            <table class="trail-table">
+              <thead><tr><th>Nom</th><th>Statut</th><th></th></tr></thead>
+              <tbody id="shelter-rows"></tbody>
+            </table>
+          </div>
+        </details>
+
         <!-- System admin: assign a sector to the ticked trails -->
-        <div class="trail-bulk" id="trail-bulk" hidden>
+        <div class="trail-bulk" id="trail-bulk">
           <select class="form-select" id="trail-bulk-sector" aria-label="Secteur à attribuer"></select>
           <button type="button" class="btn btn-secondary btn-sm" id="trail-bulk-apply">Attribuer aux sentiers cochés</button>
           <span id="trail-selected-count" class="cal-source" style="margin: 0;"></span>
@@ -498,7 +711,7 @@
 
         <div class="trail-table-wrap" style="margin-top: var(--space-md);">
           <table class="trail-table">
-            <thead><tr><th id="trail-th-select" hidden><input type="checkbox" id="trail-select-all" aria-label="Tout cocher"></th><th>N°</th><th>Nom</th><th>Secteur</th><th>Type</th><th>Difficulté</th><th>Longueur</th><th>Statut</th><th>Position</th><th></th></tr></thead>
+            <thead><tr><th id="trail-th-select"><input type="checkbox" id="trail-select-all" aria-label="Tout cocher"></th><th>N°</th><th>Nom</th><th>Secteur</th><th>Type</th><th>Difficulté</th><th>Longueur</th><th>Statut</th><th>Position</th><th></th></tr></thead>
             <tbody id="trail-rows"></tbody>
           </table>
         </div>
@@ -521,7 +734,6 @@
             <div class="form-group">
               <label class="form-label" for="tr-sector">Secteur</label>
               <select class="form-select" id="tr-sector"></select>
-              <span class="form-hint" id="tr-sector-hint">Attribué par un system admin</span>
             </div>
             <div class="form-group" id="tr-difficulty-group">
               <label class="form-label" for="tr-difficulty">Difficulté</label>
@@ -626,116 +838,6 @@
       </div>
     </div>
 
-    <!-- TAB 2: BULK IMPORT -->
-    <div class="admin-tab-content" id="import-tab">
-      <div class="data-export-section">
-        <div class="data-export-section__header">
-          <span>📥</span>
-          <h3>Importation en lot</h3>
-        </div>
-        <p class="data-export-section__description">
-          Importez plusieurs utilisateurs à partir d'un fichier CSV. Le fichier doit contenir les colonnes: 
-          <strong>name, email, password, role</strong> (optionnel: phone, allowInspection, allowInfraction, allowSignalisation, networks).
-          <strong>networks</strong> : activités séparées par « | », par exemple <code>ski|bike</code>. Sans cette colonne, l'utilisateur reçoit l'activité par défaut (ski).
-        </p>
-
-        <div class="form-group">
-          <label class="form-label" for="csv-file">Fichier CSV</label>
-          <input type="file" class="form-input" id="csv-file" accept=".csv" onchange="handleCsvSelect(event)">
-          <span class="form-hint">Format: name,email,password,role (inspector ou admin)</span>
-        </div>
-
-        <!-- CSV Preview -->
-        <div id="csv-preview" style="display: none;" class="mt-4">
-          <div class="data-export-section__header">
-            <span>👁️</span>
-            <h4>Aperçu (<span id="csv-count">0</span> utilisateurs)</h4>
-          </div>
-          <div class="data-table__body" style="max-height: 300px; overflow-y: auto;">
-            <table class="table table--sm">
-              <thead>
-                <tr>
-                  <th>Nom</th>
-                  <th>Email</th>
-                  <th>Rôle</th>
-                  <th>Activités</th>
-                  <th>Accès</th>
-                </tr>
-              </thead>
-              <tbody id="csv-preview-tbody"></tbody>
-            </table>
-          </div>
-          
-          <div class="export-form-row mt-4">
-            <button class="btn btn-primary" id="start-import-btn" onclick="startBulkImport()" disabled>
-              <span>🚀</span>
-              <span>Démarrer l'importation</span>
-            </button>
-            <button class="btn btn-secondary" id="cancel-import-btn" onclick="cancelBulkImport()" style="display: none;">
-              <span>❌</span>
-              <span>Annuler</span>
-            </button>
-          </div>
-
-          <!-- Progress -->
-          <div id="import-progress" style="display: none;" class="mt-4">
-            <div class="form-label">Progression</div>
-            <div style="background: var(--theme-border); border-radius: var(--radius-md); height: 8px; overflow: hidden;">
-              <div id="import-progress-bar" style="background: var(--theme-accent); height: 100%; width: 0%; transition: width 0.3s;"></div>
-            </div>
-            <p id="import-progress-text" class="form-hint mt-2">0 / 0</p>
-          </div>
-        </div>
-
-        <!-- Import Results -->
-        <div id="import-results" style="display: none;" class="mt-4">
-          <div class="quick-stats">
-            <div class="quick-stat">
-              <div class="quick-stat__icon">✅</div>
-              <div class="quick-stat__content">
-                <div class="quick-stat__value" id="import-success-count">0</div>
-                <div class="quick-stat__label">Créés</div>
-              </div>
-            </div>
-            <div class="quick-stat">
-              <div class="quick-stat__icon">⏭️</div>
-              <div class="quick-stat__content">
-                <div class="quick-stat__value" id="import-skipped-count">0</div>
-                <div class="quick-stat__label">Ignorés (doublons)</div>
-              </div>
-            </div>
-            <div class="quick-stat">
-              <div class="quick-stat__icon">❌</div>
-              <div class="quick-stat__content">
-                <div class="quick-stat__value" id="import-error-count">0</div>
-                <div class="quick-stat__label">Erreurs</div>
-              </div>
-            </div>
-          </div>
-          
-          <div id="import-errors-list" style="display: none;" class="mt-4">
-            <h5 style="color: var(--color-danger);">Détails des erreurs :</h5>
-            <ul id="import-errors-ul" style="font-size: 0.875rem; color: var(--theme-text-secondary);"></ul>
-          </div>
-        </div>
-
-        <!-- Sample CSV Template -->
-        <div class="mt-6" style="padding-top: var(--space-lg); border-top: 1px solid var(--theme-border);">
-          <div class="data-export-section__header">
-            <span>📄</span>
-            <h4>Modèle CSV</h4>
-          </div>
-          <p class="data-export-section__description">
-            Téléchargez un modèle CSV pour voir le format attendu.
-          </p>
-          <button class="btn btn-secondary" onclick="downloadCsvTemplate()">
-            <span>⬇️</span>
-            <span>Télécharger le modèle</span>
-          </button>
-        </div>
-      </div>
-    </div>
-
     <!-- TAB 3: DATA MANAGEMENT -->
     <div class="admin-tab-content" id="data-tab">
       <div class="data-export-section">
@@ -744,7 +846,7 @@
           <h3>Exporter les données d'activité</h3>
         </div>
         <p class="data-export-section__description">
-          Exportez les données du système (inspections, infractions, signalisations) à partir d'une date de début.
+          Exportez les données du système (inspections, infractions, signalisations, entretien) à partir d'une date de début.
         </p>
 
         <h4 style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem;">
@@ -779,6 +881,13 @@
               <span class="export-option-desc">signalisations</span>
             </div>
           </label>
+          <label class="export-option">
+            <input type="checkbox" id="export-maintenance" checked>
+            <div class="export-option-label">
+              <span class="export-option-name">🪏 Entretien</span>
+              <span class="export-option-desc">maintenance_logs (CSV : une ligne par travail)</span>
+            </div>
+          </label>
         </div>
 
         <div class="export-form-row">
@@ -804,6 +913,43 @@
         </div>
 
         <div class="export-status" id="export-status"></div>
+      </div>
+    </div>
+
+    <!-- TAB: LINKS AND TIPS -->
+    <div class="admin-tab-content" id="links-tab">
+      <div class="data-export-section links-card">
+        <div class="data-export-section__header">
+          <span>🗺️</span>
+          <h3>Statut public des sentiers</h3>
+        </div>
+        <p class="data-export-section__description">
+          Page publique, sans connexion. À partager ou à copier dans un navigateur.
+        </p>
+        <div class="links-row">
+          <a class="links-url" id="link-public-status" target="_blank" rel="noopener"></a>
+          <button class="btn btn-secondary btn-sm" type="button" data-copy="link-public-status">📋 Copier</button>
+        </div>
+      </div>
+
+      <div class="data-export-section links-card" id="links-volunteer-card">
+        <div class="data-export-section__header">
+          <span>🙋</span>
+          <h3>Inscription des bénévoles</h3>
+        </div>
+        <p class="data-export-section__description">
+          Page publique d'inscription (vélo). Imprimez le code QR pour l'afficher à l'entrée des sentiers.
+        </p>
+        <div class="links-qr">
+          <div class="links-qr__image" id="links-volunteer-qr" aria-label="Code QR de la page d'inscription des bénévoles"></div>
+          <div class="links-qr__side">
+            <div class="links-row">
+              <a class="links-url" id="link-volunteer" target="_blank" rel="noopener"></a>
+              <button class="btn btn-secondary btn-sm" type="button" data-copy="link-volunteer">📋 Copier</button>
+            </div>
+            <a class="btn btn-secondary btn-sm" id="links-volunteer-qr-download" download="qrcode-inscription-benevoles.svg" hidden>⬇️ Télécharger le code QR</a>
+          </div>
+        </div>
       </div>
     </div>
   </main>
@@ -874,6 +1020,10 @@
               <input type="checkbox" class="form-check-input" id="access-signalisation">
               <label class="form-check-label" for="access-signalisation">🚧 Signalisation</label>
             </div>
+            <div class="form-check">
+              <input type="checkbox" class="form-check-input" id="access-maintenance">
+              <label class="form-check-label" for="access-maintenance">🪏 Entretien</label>
+            </div>
           </div>
 
           <div class="form-group" id="password-group" style="display: none;">
@@ -913,6 +1063,8 @@
   <script src="../js/admin/map-calibration.js"></script>
   <script src="../js/services/trail-service.js"></script>
   <script src="../js/admin/trail-admin.js"></script>
+  <!-- QR code drawing for the "Liens et astuces" tab (qrcode-generator 1.4.4, MIT, bundled) -->
+  <script src="../js/vendor/qrcode.js"></script>
 
   <!-- Page JS -->
   <script>
@@ -951,13 +1103,184 @@
     // TAB NAVIGATION
     // ========================================
     
+    // Sentiers, Cartes and Données are for the system admin only (the others never see these tabs)
+    const SYSTEM_ADMIN_TABS = ['trails', 'maps', 'data'];
+
     function switchTab(tabName) {
+      if (SYSTEM_ADMIN_TABS.includes(tabName) && !isCurrentUserSystemAdmin) return;
       document.querySelectorAll('.admin-tabs__btn').forEach(btn => {
         btn.classList.toggle('is-active', btn.dataset.tab === tabName);
       });
       document.querySelectorAll('.admin-tab-content').forEach(content => {
         content.classList.toggle('is-active', content.id === `${tabName}-tab`);
       });
+    }
+
+    // ========================================
+    // LINKS AND TIPS
+    // ========================================
+
+    // Absolute address of a sibling page of this one (works under any site root or sub-folder)
+    function pageLink(file) {
+      return new URL(file, window.location.href).href;
+    }
+
+    function setupLinksTab(showVolunteers) {
+      const status = document.getElementById('link-public-status');
+      status.href = status.textContent = pageLink('public-status.html');
+
+      document.getElementById('links-volunteer-card').hidden = !showVolunteers;
+      if (showVolunteers) {
+        const link = pageLink('maintenance-volunteer-register.html');
+        const volunteer = document.getElementById('link-volunteer');
+        volunteer.href = volunteer.textContent = link;
+        const holder = document.getElementById('links-volunteer-qr');
+        if (typeof qrcode === 'function') {
+          const qr = qrcode(0, 'M');
+          qr.addData(link);
+          qr.make();
+          const svg = qr.createSvgTag({ cellSize: 6, margin: 2, scalable: true });
+          holder.innerHTML = svg;
+          const download = document.getElementById('links-volunteer-qr-download');
+          download.href = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+          download.hidden = false;
+        } else {
+          holder.textContent = 'Code QR indisponible (bibliothèque non chargée).';
+        }
+      }
+
+      document.querySelectorAll('[data-copy]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const text = document.getElementById(btn.dataset.copy).textContent;
+          try {
+            await navigator.clipboard.writeText(text);
+            const label = btn.textContent;
+            btn.textContent = '✅ Copié';
+            setTimeout(() => { btn.textContent = label; }, 1500);
+          } catch (e) {
+            window.prompt('Copiez le lien :', text);
+          }
+        });
+      });
+    }
+
+    // ========================================
+    // VOLUNTEERS (bike network)
+    // ========================================
+
+    let volunteersData = [];
+
+    async function loadVolunteersTab() {
+      const loading = document.getElementById('volunteers-loading');
+      const emptyState = document.getElementById('volunteers-empty-state');
+      const tbody = document.getElementById('volunteers-tbody');
+
+      loading.style.display = 'flex';
+      emptyState.style.display = 'none';
+      tbody.innerHTML = '';
+
+      try {
+        const snap = await db.collection('volunteers')
+          .where('network', '==', 'bike')
+          .orderBy('createdAt', 'desc')
+          .get();
+
+        volunteersData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        renderVolunteersTab();
+      } catch (e) {
+        console.error('Error loading volunteers:', e);
+        showMessage('Erreur lors du chargement des bénévoles.', 'error');
+      } finally {
+        loading.style.display = 'none';
+      }
+    }
+
+    function renderVolunteersTab() {
+      const tbody = document.getElementById('volunteers-tbody');
+      const emptyState = document.getElementById('volunteers-empty-state');
+      const countEl = document.getElementById('volunteers-count');
+
+      countEl.textContent = `${volunteersData.length} bénévole${volunteersData.length > 1 ? 's' : ''}`;
+
+      if (volunteersData.length === 0) {
+        tbody.innerHTML = '';
+        emptyState.style.display = 'flex';
+        updateVolunteersSelectionState();
+        return;
+      }
+      emptyState.style.display = 'none';
+
+      tbody.innerHTML = volunteersData.map(v => {
+        const date = v.createdAt?.toDate?.();
+        const dateStr = date ? date.toLocaleDateString('fr-CA', { year: 'numeric', month: 'short', day: 'numeric' }) : '-';
+        return `
+        <tr>
+          <td><input type="checkbox" class="volunteer-checkbox" value="${v.id}"></td>
+          <td data-label="Nom">${escapeHtml(v.nom || '-')}</td>
+          <td data-label="Prénom">${escapeHtml(v.prenom || '-')}</td>
+          <td data-label="Date d'inscription">${dateStr}</td>
+        </tr>
+      `;
+      }).join('');
+
+      tbody.querySelectorAll('.volunteer-checkbox').forEach(cb => {
+        cb.addEventListener('change', updateVolunteersSelectionState);
+      });
+      updateVolunteersSelectionState();
+    }
+
+    function updateVolunteersSelectionState() {
+      const checkboxes = Array.from(document.querySelectorAll('.volunteer-checkbox'));
+      const checked = checkboxes.filter(cb => cb.checked);
+      document.getElementById('delete-selected-volunteers-btn').disabled = checked.length === 0;
+
+      const selectAll = document.getElementById('volunteers-select-all');
+      selectAll.checked = checkboxes.length > 0 && checked.length === checkboxes.length;
+      selectAll.indeterminate = checked.length > 0 && checked.length < checkboxes.length;
+    }
+
+    function toggleAllVolunteers(checked) {
+      document.querySelectorAll('.volunteer-checkbox').forEach(cb => { cb.checked = checked; });
+      updateVolunteersSelectionState();
+    }
+
+    // Firestore batches cap at 500 writes; chunk deletes to stay under that.
+    async function deleteVolunteersByIds(ids) {
+      const CHUNK = 450;
+      for (let i = 0; i < ids.length; i += CHUNK) {
+        const batch = db.batch();
+        ids.slice(i, i + CHUNK).forEach(id => batch.delete(db.collection('volunteers').doc(id)));
+        await batch.commit();
+      }
+    }
+
+    async function deleteSelectedVolunteers() {
+      const ids = Array.from(document.querySelectorAll('.volunteer-checkbox:checked')).map(cb => cb.value);
+      if (ids.length === 0) return;
+      if (!confirm(`Supprimer ${ids.length} bénévole${ids.length > 1 ? 's' : ''} sélectionné${ids.length > 1 ? 's' : ''} ? Cette action est irréversible. Les journaux d'entretien existants ne sont pas affectés.`)) return;
+
+      try {
+        await deleteVolunteersByIds(ids);
+        showMessage(`${ids.length} bénévole${ids.length > 1 ? 's' : ''} supprimé${ids.length > 1 ? 's' : ''}.`, 'success');
+        loadVolunteersTab();
+      } catch (e) {
+        console.error('Error deleting volunteers:', e);
+        showMessage('Erreur lors de la suppression.', 'error');
+      }
+    }
+
+    async function deleteAllVolunteers() {
+      if (volunteersData.length === 0) return;
+      if (!confirm(`Supprimer TOUS les bénévoles inscrits (${volunteersData.length}) ? Cette action est irréversible. Les journaux d'entretien existants ne sont pas affectés.`)) return;
+
+      try {
+        await deleteVolunteersByIds(volunteersData.map(v => v.id));
+        showMessage('Tous les bénévoles ont été supprimés.', 'success');
+        loadVolunteersTab();
+      } catch (e) {
+        console.error('Error deleting all volunteers:', e);
+        showMessage('Erreur lors de la suppression.', 'error');
+      }
     }
 
     // ========================================
@@ -980,7 +1303,7 @@
           users.push({ id: doc.id, ...doc.data() });
         });
         updateStatistics();
-        filterAndRenderUsers();
+        filterAndRenderUsers(true); // a reload after an edit stays on the same page (the first load starts on page 1)
       } catch (error) {
         console.error('Error loading users:', error);
         showMessage('Erreur lors du chargement des utilisateurs.', 'error');
@@ -995,7 +1318,14 @@
       document.getElementById('stat-admins').textContent = users.filter(u => u.role === 'admin' || u.role === 'system_admin').length;
     }
 
-    function filterAndRenderUsers() {
+    // The users list shows one page at a time (25 to start, like Inspections > Gestion)
+    let usersPage = 1;
+    let usersPageSize = 25;
+
+    // keepPage === true: the list was only refreshed (a user was edited, a badge clicked): stay on this page.
+    // Anything else (a search, a filter, the page size) starts again from page 1.
+    function filterAndRenderUsers(keepPage) {
+      if (keepPage !== true) usersPage = 1;
       const search = document.getElementById('search-users').value.toLowerCase();
       const statusFilter = document.getElementById('filter-status').value;
       const networkFilter = document.getElementById('filter-network').value;
@@ -1021,12 +1351,18 @@
       if (filteredUsers.length === 0) {
         tbody.innerHTML = '';
         emptyState.style.display = 'flex';
+        document.getElementById('users-pagination').style.display = 'none';
         return;
       }
 
       emptyState.style.display = 'none';
 
-      tbody.innerHTML = filteredUsers.map(user => {
+      // This page only (a page that no longer exists, after a filter or a deletion, falls back to the last one)
+      const totalPages = Math.max(1, Math.ceil(filteredUsers.length / usersPageSize));
+      if (usersPage > totalPages) usersPage = totalPages;
+      const pageUsers = filteredUsers.slice((usersPage - 1) * usersPageSize, usersPage * usersPageSize);
+
+      tbody.innerHTML = pageUsers.map(user => {
         let roleBadgeClass = 'badge-inspector';
         let roleLabel = 'Inspecteur';
         if (user.role === 'system_admin') {
@@ -1059,6 +1395,7 @@
               ${appBadge(user, manageable, 'allowInspection', 'inspection', '🔍', 'Inspection')}
               ${appBadge(user, manageable, 'allowInfraction', 'infraction', '🚨', 'Infraction')}
               ${appBadge(user, manageable, 'allowSignalisation', 'signalisation', '🚧', 'Signalisation')}
+              ${appBadge(user, manageable, 'allowMaintenance', 'maintenance', '🪏', 'Entretien')}
             </div>
           </td>
           <td data-label="Statut">
@@ -1076,9 +1413,48 @@
           </td>
         </tr>
       `}).join('');
+
+      renderUsersPagination(totalPages);
     }
 
-    // App permission badge (inspection / infraction / signalisation)
+    function renderUsersPagination(totalPages) {
+      const box = document.getElementById('users-pagination');
+      if (totalPages <= 1) { box.style.display = 'none'; return; }
+      box.style.display = 'flex';
+
+      const first = (usersPage - 1) * usersPageSize + 1;
+      const last = Math.min(usersPage * usersPageSize, filteredUsers.length);
+      document.getElementById('users-pagination-info').textContent = `Affichage de ${first} à ${last} sur ${filteredUsers.length}`;
+
+      let html = `<button type="button" class="page-btn" aria-label="Page précédente" onclick="goToUsersPage(${usersPage - 1})" ${usersPage === 1 ? 'disabled' : ''}>‹</button>`;
+      const maxButtons = 5;
+      let startPage = Math.max(1, usersPage - Math.floor(maxButtons / 2));
+      let endPage = Math.min(totalPages, startPage + maxButtons - 1);
+      if (endPage - startPage < maxButtons - 1) startPage = Math.max(1, endPage - maxButtons + 1);
+      if (startPage > 1) {
+        html += `<button type="button" class="page-btn" onclick="goToUsersPage(1)">1</button>`;
+        if (startPage > 2) html += `<span class="page-ellipsis">…</span>`;
+      }
+      for (let i = startPage; i <= endPage; i++) {
+        html += `<button type="button" class="page-btn ${i === usersPage ? 'active' : ''}" onclick="goToUsersPage(${i})">${i}</button>`;
+      }
+      if (endPage < totalPages) {
+        if (endPage < totalPages - 1) html += `<span class="page-ellipsis">…</span>`;
+        html += `<button type="button" class="page-btn" onclick="goToUsersPage(${totalPages})">${totalPages}</button>`;
+      }
+      html += `<button type="button" class="page-btn" aria-label="Page suivante" onclick="goToUsersPage(${usersPage + 1})" ${usersPage === totalPages ? 'disabled' : ''}>›</button>`;
+      document.getElementById('users-pagination-buttons').innerHTML = html;
+    }
+
+    function goToUsersPage(page) {
+      const totalPages = Math.max(1, Math.ceil(filteredUsers.length / usersPageSize));
+      if (page < 1 || page > totalPages) return;
+      usersPage = page;
+      renderUsers();
+      document.getElementById('users-table').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    // App permission badge (inspection / infraction / signalisation / maintenance)
     function appBadge(user, manageable, field, cls, icon, label) {
       const on = user[field] === true;
       const attrs = manageable
@@ -1119,7 +1495,7 @@
           modifiedBy: currentUser.uid
         });
         user.networks = next;
-        filterAndRenderUsers();
+        filterAndRenderUsers(true);
         const net = APP_CONFIG.networks[networkId];
         showMessage(`${net.name} ${next.includes(networkId) ? 'ajouté' : 'retiré'} pour ${user.name || 'utilisateur'}.`, 'success');
       } catch (error) {
@@ -1143,10 +1519,10 @@
         const userIndex = users.findIndex(u => u.id === userId);
         if (userIndex !== -1) users[userIndex][field] = newValue;
 
-        filterAndRenderUsers();
+        filterAndRenderUsers(true);
         
         const user = users.find(u => u.id === userId);
-        const fieldNames = { allowInspection: 'Inspection', allowInfraction: 'Infraction', allowSignalisation: 'Signalisation' };
+        const fieldNames = { allowInspection: 'Inspection', allowInfraction: 'Infraction', allowSignalisation: 'Signalisation', allowMaintenance: 'Entretien' };
         showMessage(`${fieldNames[field]} ${newValue ? 'activé' : 'désactivé'} pour ${user?.name || 'utilisateur'}.`, 'success');
       } catch (error) {
         console.error('Error toggling access:', error);
@@ -1233,6 +1609,7 @@
       document.getElementById('access-inspection').checked = user.allowInspection === true;
       document.getElementById('access-infraction').checked = user.allowInfraction === true;
       document.getElementById('access-signalisation').checked = user.allowSignalisation === true;
+      document.getElementById('access-maintenance').checked = user.allowMaintenance === true;
       
       document.getElementById('password-group').style.display = 'none';
       document.getElementById('user-password').required = false;
@@ -1286,7 +1663,8 @@
         networks: selectedNetworks(),
         allowInspection: document.getElementById('access-inspection').checked,
         allowInfraction: document.getElementById('access-infraction').checked,
-        allowSignalisation: document.getElementById('access-signalisation').checked
+        allowSignalisation: document.getElementById('access-signalisation').checked,
+        allowMaintenance: document.getElementById('access-maintenance').checked
       };
 
       if (userData.networks.length === 0) {
@@ -1374,7 +1752,8 @@
           Statut: u.status === 'active' ? 'Actif' : 'Inactif',
           Inspection: u.allowInspection === true ? 'Oui' : 'Non',
           Infraction: u.allowInfraction === true ? 'Oui' : 'Non',
-          Signalisation: u.allowSignalisation === true ? 'Oui' : 'Non'
+          Signalisation: u.allowSignalisation === true ? 'Oui' : 'Non',
+          Entretien: u.allowMaintenance === true ? 'Oui' : 'Non'
         };
       });
 
@@ -1392,13 +1771,15 @@
     // DATA EXPORT
     // ========================================
 
+    // The export starts, by default, at the start of the latest season of the chosen activity
+    // (ski 1 Nov, bike 1 May); for "all activities", at the earliest of them. Editable.
     function initializeExportDate() {
-      const today = new Date();
-      let year = today.getFullYear();
-      if (today.getMonth() < 8) year--;
-      document.getElementById('export-start-date').value = new Date(year, 8, 1).toISOString().split('T')[0];
+      const chosen = document.getElementById('export-network').value;
+      const starts = (chosen ? [chosen] : NETWORK_IDS).map(id => Network.seasonStart(id));
+      const start = new Date(Math.min(...starts.map(d => d.getTime())));
+      const pad = n => String(n).padStart(2, '0');
+      document.getElementById('export-start-date').value = `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}`;
     }
-
     function showExportStatus(message, type = 'info') {
       const el = document.getElementById('export-status');
       el.textContent = message;
@@ -1423,6 +1804,30 @@
       return result;
     }
 
+    // CSV of the Entretien logs: one row per work entry (a day's log holds several), the log's own
+    // fields repeated on each row; people and photo links joined with " | ". JSON keeps the nested logs.
+    function maintenanceCsvRows(logs) {
+      return logs.flatMap(log => {
+        const base = {
+          id: log.id, date: log.date, network: log.network,
+          builderName: log.builderName || '',
+          supportBuilderNames: (log.supportBuilderNames || []).join(' | '),
+          volunteerNames: (log.volunteerNames || []).join(' | '),
+          archived: log.archived ? 'Oui' : 'Non',
+          createdAt: log.createdAt, modifiedAt: log.modifiedAt
+        };
+        const entries = log.entries && log.entries.length ? log.entries : [{}];
+        return entries.map((entry, i) => ({
+          ...base,
+          entry: i + 1,
+          sector: entry.sector || '', trailId: entry.trailId || '', trailName: entry.trailName || '',
+          jobText: entry.jobText || '',
+          photoCount: (entry.photos || []).length,
+          photoUrls: (entry.photos || []).map(p => p.url).join(' | ')
+        }));
+      });
+    }
+
     async function exportData() {
       const btn = document.getElementById('export-data-btn');
       const format = document.getElementById('export-data-format').value;
@@ -1431,10 +1836,11 @@
         trail: document.getElementById('export-trail-inspections').checked,
         shelter: document.getElementById('export-shelter-inspections').checked,
         infraction: document.getElementById('export-infractions').checked,
-        signalisation: document.getElementById('export-signalisations').checked
+        signalisation: document.getElementById('export-signalisations').checked,
+        maintenance: document.getElementById('export-maintenance').checked
       };
-      
-      if (!opts.trail && !opts.shelter && !opts.infraction && !opts.signalisation) {
+
+      if (!opts.trail && !opts.shelter && !opts.infraction && !opts.signalisation && !opts.maintenance) {
         showExportStatus('Sélectionnez au moins un type de données.', 'error');
         return;
       }
@@ -1519,6 +1925,21 @@
           } catch(e) { exportResult.signalisations = []; exportResult.summary.signalisationsCount = 0; }
         }
 
+        if (opts.maintenance) {
+          showExportStatus('Chargement entretien...', 'info');
+          try {
+            // By day worked ("date"); the photos inside each work entry get readable timestamps too
+            const snap = await db.collection('maintenance_logs').where('date', '>=', startTimestamp).orderBy('date', 'desc').get();
+            const data = snap.docs.map(doc => {
+              const log = formatDocumentDates(doc.data());
+              log.entries = (log.entries || []).map(entry => ({ ...entry, photos: (entry.photos || []).map(formatDocumentDates) }));
+              return { id: doc.id, ...log };
+            }).filter(inNetwork);
+            exportResult.maintenanceLogs = data;
+            exportResult.summary.maintenanceLogsCount = data.length;
+          } catch(e) { exportResult.maintenanceLogs = []; exportResult.summary.maintenanceLogsCount = 0; }
+        }
+
         const fromStr = startDate.toISOString().split('T')[0];
         const toStr = new Date().toISOString().split('T')[0];
         const baseName = `Orford_Live-Export-${fromStr}-to-${toStr}`;
@@ -1528,10 +1949,11 @@
             { key: 'trailInspections', label: 'Inspections-Sentiers' },
             { key: 'shelterInspections', label: 'Inspections-Abris' },
             { key: 'infractions', label: 'Infractions' },
-            { key: 'signalisations', label: 'Signalisations' }
+            { key: 'signalisations', label: 'Signalisations' },
+            { key: 'maintenanceLogs', label: 'Entretien', rows: maintenanceCsvRows }
           ];
           types.forEach((t, i) => {
-            const records = exportResult[t.key];
+            const records = t.rows ? t.rows(exportResult[t.key] || []) : exportResult[t.key];
             if (!records || !records.length) return;
             const headers = [...new Set(records.flatMap(Object.keys))];
             const csv = '\uFEFF' + [headers.join(','), ...records.map(r => headers.map(h => `"${String(r[h] ?? '').replace(/"/g, '""')}"`).join(','))].join('\n');
@@ -1542,7 +1964,8 @@
         }
 
         const total = (exportResult.summary.trailInspectionsCount || 0) + (exportResult.summary.shelterInspectionsCount || 0) + 
-                      (exportResult.summary.infractionsCount || 0) + (exportResult.summary.signalisationsCount || 0);
+                      (exportResult.summary.infractionsCount || 0) + (exportResult.summary.signalisationsCount || 0) +
+                      (exportResult.summary.maintenanceLogsCount || 0);
         showExportStatus(`✓ Export réussi! ${total} enregistrements.`, 'success');
 
       } catch (error) {
@@ -1623,6 +2046,7 @@
         user.allowInspection = user.allowinspection !== 'false' && user.allowinspection !== '0';
         user.allowInfraction = user.allowinfraction === 'true' || user.allowinfraction === '1';
         user.allowSignalisation = user.allowsignalisation === 'true' || user.allowsignalisation === '1';
+        user.allowMaintenance = user.allowmaintenance === 'true' || user.allowmaintenance === '1';
 
         // Activities: "ski|bike". A system admin gets all of them; anyone else only gets
         // activities the importing admin holds. Empty column = default activity.
@@ -1676,6 +2100,7 @@
             <span class="access-badge--clickable access-badge--inspection ${user.allowInspection ? 'is-active' : ''}" style="width:24px;height:24px;font-size:0.875rem;">🔍</span>
             <span class="access-badge--clickable access-badge--infraction ${user.allowInfraction ? 'is-active' : ''}" style="width:24px;height:24px;font-size:0.875rem;">🚨</span>
             <span class="access-badge--clickable access-badge--signalisation ${user.allowSignalisation ? 'is-active' : ''}" style="width:24px;height:24px;font-size:0.875rem;">🚧</span>
+            <span class="access-badge--clickable access-badge--maintenance ${user.allowMaintenance ? 'is-active' : ''}" style="width:24px;height:24px;font-size:0.875rem;">🪏</span>
           </td>
         </tr>
       `}).join('');
@@ -1755,6 +2180,7 @@
             allowInspection: user.allowInspection,
             allowInfraction: user.allowInfraction,
             allowSignalisation: user.allowSignalisation,
+            allowMaintenance: user.allowMaintenance,
             createdAt: firebase.firestore.FieldValue.serverTimestamp(),
             createdBy: currentUser.uid,
             importedVia: 'bulk_import'
@@ -1822,12 +2248,14 @@
       }
     }
 
+    // One column per field of a user profile that an import can set (status is always "active")
+    const CSV_TEMPLATE = `name,email,password,role,phone,allowInspection,allowInfraction,allowSignalisation,allowMaintenance,networks
+Jean Dupont,jean.dupont@example.com,MotDePasse123,inspector,514-555-1234,true,false,false,false,ski
+Sophie Gagnon,sophie.gagnon@example.com,MotDePasse789,inspector,,true,false,false,true,bike
+Marie Tremblay,marie.tremblay@example.com,MotDePasse456,admin,,true,true,true,false,ski|bike`;
+
     function downloadCsvTemplate() {
-      const template = `name,email,password,role,phone,allowInspection,allowInfraction,allowSignalisation,networks
-Jean Dupont,jean.dupont@example.com,MotDePasse123,inspector,514-555-1234,true,false,false,ski
-Marie Tremblay,marie.tremblay@example.com,MotDePasse456,admin,,true,true,true,ski|bike`;
-      
-      downloadFile('\uFEFF' + template, 'modele_import_utilisateurs.csv', 'text/csv;charset=utf-8');
+      downloadFile('\uFEFF' + CSV_TEMPLATE, 'modele_import_utilisateurs.csv', 'text/csv;charset=utf-8');
       showMessage('Modèle CSV téléchargé.', 'success');
     }
 
@@ -1849,26 +2277,41 @@ Marie Tremblay,marie.tremblay@example.com,MotDePasse456,admin,,true,true,true,sk
           }
 
           buildNetworkCheckboxes();
-          // Data export: an admin exports their own activities; only a system admin can export all at once
+          // Data export (system admin only): every activity at once, or one of them
           document.getElementById('export-network').innerHTML =
-            (isCurrentUserSystemAdmin ? '<option value="">Toutes les activités</option>' : '') +
+            '<option value="">Toutes les activités</option>' +
             myNetworks().map(id => `<option value="${id}">${APP_CONFIG.networks[id].icon} ${APP_CONFIG.networks[id].name}</option>`).join('');
-          // Trails and sectors of the activities this admin holds; sectors and sector assignment are system admin only
-          TrailAdmin.init(currentUser.uid, myNetworks(), { isSystemAdmin: isCurrentUserSystemAdmin });
-          // GPS calibration of the maps: system admin only (the Firestore rules enforce it too)
+          // System admin only: Sentiers (trails and sectors), Cartes (GPS calibration of the maps) and Données (export)
           if (isCurrentUserSystemAdmin) {
-            document.getElementById('maps-tab-btn').style.display = '';
+            SYSTEM_ADMIN_TABS.forEach(tab => { document.getElementById(`${tab}-tab-btn`).style.display = ''; });
+            TrailAdmin.init(currentUser.uid, myNetworks());
             MapCalibration.init(currentUser.uid);
           }
+          // Volunteers (bike network only): shown to a system admin or an admin who works in bike
+          const bikeAdmin = isCurrentUserSystemAdmin || myNetworks().includes('bike');
+          if (bikeAdmin) {
+            document.getElementById('volunteers-tab-btn').style.display = '';
+            loadVolunteersTab();
+          }
+          setupLinksTab(bikeAdmin);
+          document.getElementById('volunteers-select-all').addEventListener('change', (e) => toggleAllVolunteers(e.target.checked));
+          document.getElementById('delete-selected-volunteers-btn').addEventListener('click', deleteSelectedVolunteers);
+          document.getElementById('delete-all-volunteers-btn').addEventListener('click', deleteAllVolunteers);
+          document.getElementById('refresh-volunteers-btn').addEventListener('click', loadVolunteersTab);
           document.getElementById('filter-network').insertAdjacentHTML('beforeend',
             NETWORK_IDS.map(id => `<option value="${id}">${APP_CONFIG.networks[id].icon} ${APP_CONFIG.networks[id].name}</option>`).join(''));
           document.getElementById('user-role').addEventListener('change', applyNetworkLocks);
 
           loadUsers();
           initializeExportDate();
-          document.getElementById('search-users').addEventListener('input', debounce(filterAndRenderUsers, 300));
-          document.getElementById('filter-status').addEventListener('change', filterAndRenderUsers);
-          document.getElementById('filter-network').addEventListener('change', filterAndRenderUsers);
+          document.getElementById('export-network').addEventListener('change', initializeExportDate);
+          document.getElementById('search-users').addEventListener('input', debounce(() => filterAndRenderUsers(), 300));
+          document.getElementById('filter-status').addEventListener('change', () => filterAndRenderUsers());
+          document.getElementById('filter-network').addEventListener('change', () => filterAndRenderUsers());
+          document.getElementById('users-page-size').addEventListener('change', e => {
+            usersPageSize = parseInt(e.target.value, 10) || 25;
+            filterAndRenderUsers();
+          });
         }
       });
     }

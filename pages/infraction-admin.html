@@ -107,12 +107,13 @@
                   <th>Contrevenant</th>
                   <th>Infraction</th>
                   <th>Localisation</th>
+                  <th>Photos</th>
                   <th>Patrouilleur</th>
                   <th>Statut</th>
                 </tr>
               </thead>
               <tbody id="infractions-tbody">
-                <tr><td colspan="6" style="text-align:center;">Chargement...</td></tr>
+                <tr><td colspan="7" style="text-align:center;">Chargement...</td></tr>
               </tbody>
             </table>
           </div>
@@ -133,7 +134,7 @@
       </div>
       <div class="modal__footer">
         <button class="btn btn-warning" id="archive-btn">Archiver</button>
-        <button class="btn btn-primary" id="save-btn">Enregistrer les modifications</button>
+        <button class="btn btn-primary" id="save-btn">Enregistrer et fermer</button>
         <button class="btn btn-secondary" id="close-btn">Fermer</button>
       </div>
     </div>
@@ -152,6 +153,7 @@
   <script src="../js/services/map-service.js"></script>
   <script src="../js/services/photo-map-modal.js"></script>
   <script src="../js/services/sector-service.js"></script>
+  <script src="../js/services/trail-service.js"></script>
 
   <script>
     // Fault types and practices of the current activity (APP_CONFIG.networks[..].infractions),
@@ -163,11 +165,26 @@
     let showArchived = false;
     let sortBy = 'date';
     let currentInfractionId = null;
-    let sectors = []; // every sector (names), from Firestore (SectorService)
+    let sectors = []; // this activity's sectors, with their trails (SectorService.load) - names, and geoMapFor
 
     // Infractions store the sector id only. If the sectors cannot be loaded the page
     // falls back to showing that id.
     const sectorNameOf = inf => SectorService.nameOf(sectors, inf.sector, inf.sectorName);
+
+    // Which map a record's photos should default to: its own trail's kind, else its sector's kind
+    // when every trail of that sector shares one (e.g. a sector used only for backcountry/
+    // randonnée alpine reports, with no specific trail selected) - else null (network default).
+    // See js/services/photo-map-modal.js for how `preferred` is used.
+    function geoMapFor(record) {
+      const sector = SectorService.find(sectors, record.sector);
+      const trail = sector && sector.items.find(i => i.id === record.trailId);
+      if (trail) return TrailService.geoMapIdOf(trail.kind);
+      if (sector && sector.items.length) {
+        const kinds = new Set(sector.items.map(i => i.kind));
+        if (kinds.size === 1) return TrailService.geoMapIdOf([...kinds][0]);
+      }
+      return null;
+    }
 
     function initInfractionAdmin() {
       checkAuthStatus({
@@ -177,7 +194,7 @@
           ({ faults: FAULT_LABELS, practices: PRACTICE_LABELS } = Network.config().infractions);
           bindEvents();
           try {
-            sectors = await SectorService.loadAll();
+            sectors = await SectorService.load();
           } catch (e) {
             console.error('Error loading sectors:', e);
           }
@@ -212,7 +229,7 @@
 
     async function loadInfractions() {
       const tbody = document.getElementById('infractions-tbody');
-      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">Chargement...</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">Chargement...</td></tr>';
       
       try {
         let query = db.collection('infractions').orderBy('createdAt', 'desc');
@@ -231,7 +248,7 @@
         renderInfractions();
       } catch (e) {
         console.error('Error loading infractions:', e);
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--color-danger);">Erreur de chargement</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--color-danger);">Erreur de chargement</td></tr>';
       }
     }
 
@@ -239,7 +256,7 @@
       const tbody = document.getElementById('infractions-tbody');
       
       if (infractionsData.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">Aucune infraction trouvée</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">Aucune infraction trouvée</td></tr>';
         return;
       }
       
@@ -267,6 +284,7 @@
             <td>${escapeHtml(inf.offenderName || '-')}</td>
             <td>${FAULT_LABELS[inf.fault] || inf.fault || '-'}</td>
             <td>${escapeHtml(location)}</td>
+            <td><span class="badge badge-secondary">📷 ${PhotoService.photosFrom(inf).length}</span></td>
             <td>${escapeHtml(inf.patrolName || '-')}</td>
             <td>${status}</td>
           </tr>
@@ -302,14 +320,10 @@
       const photos = PhotoService.photosFrom(inf);
       
       if (photos.length > 0) {
+        const preferredMap = geoMapFor(inf);
         photoHtml = '<div class="photo-gallery" style="display:flex;flex-wrap:wrap;gap:0.5rem;">';
         photos.forEach((photo, idx) => {
-          let locationHtml = '';
-          if (photo.coordinates && photo.coordinates.latitude && photo.coordinates.longitude) {
-            const lat = photo.coordinates.latitude;
-            const lon = photo.coordinates.longitude;
-            locationHtml = `<div class="photo-location"><a href="#" onclick="window.openPhotoLocationModal(${lat},${lon});return false;">📍 Carte</a><a href="https://www.google.com/maps?q=${lat},${lon}" target="_blank" rel="noopener noreferrer">🗺️</a></div>`;
-          }
+          const locationHtml = PhotoMapModal.locationLinks(photo, { collection: 'infractions', docId: inf.id, record: inf, preferredMap, onChanged: async () => { await loadInfractions(); await openDetail(id); } });
           photoHtml += `<div class="photo-gallery-item" style="position:relative;">
             <img src="${photo.url}" class="detail-photo" alt="Photo ${idx + 1}" onclick="window.open('${photo.url}', '_blank')" style="max-width:150px;max-height:150px;">
             ${locationHtml}
@@ -414,6 +428,7 @@
         });
         
         showToast('Modifications enregistrées', 'success');
+        closeModal(); // save and close
         loadInfractions();
       } catch (e) {
         console.error('Error saving:', e);

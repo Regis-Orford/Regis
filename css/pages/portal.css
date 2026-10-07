@@ -30,7 +30,7 @@
 .app-grid {
   display: grid;
   gap: var(--space-6);
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); /* 80% of the previous 300px, so a notch more fit per row */
 }
 
 /* ===== APP CARD ===== */
@@ -101,6 +101,10 @@
   background: linear-gradient(135deg, var(--color-request) 0%, var(--color-request-dark) 100%);
 }
 
+.app-card--maintenance .app-card__header {
+  background: linear-gradient(135deg, var(--color-maintenance) 0%, var(--color-maintenance-dark) 100%);
+}
+
 .app-card__icon {
   display: flex;
   align-items: center;
@@ -149,14 +153,6 @@
 
 .app-card:hover .app-card__action {
   text-decoration: underline;
-}
-
-.app-card__badge {
-  font-size: var(--text-xs);
-  padding: var(--space-1) var(--space-2);
-  background-color: var(--color-warning-light);
-  color: var(--color-warning-dark);
-  border-radius: var(--border-radius-full);
 }
 
 /* ===== QUICK STATS ===== */

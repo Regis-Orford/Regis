@@ -9,10 +9,16 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚧</text></svg>">
   <link rel="stylesheet" href="../css/main.css">
   <style>
-    .filters-bar { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; }
-    .filters-bar .form-select { width: auto; min-width: 150px; }
-    .filters-bar label { display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; cursor: pointer; }
-    
+    /* Filters section (same collapsible layout as inspection-history.html, kept small by default) */
+    .filters-section { background: var(--theme-surface); border: 1px solid var(--theme-border); border-radius: var(--radius-lg); padding: 1rem 1.25rem; margin-bottom: 1.5rem; }
+    .filters-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; }
+    .filters-title { font-size: 1rem; font-weight: 600; display: flex; align-items: center; gap: 0.5rem; }
+    .filters-toggle { background: none; border: none; color: var(--theme-accent); cursor: pointer; font-size: 0.875rem; }
+    .filters-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; align-items: end; }
+    .filters-grid .form-group { margin-bottom: 0; }
+    .filters-grid .form-check { display: flex; align-items: center; gap: 0.5rem; height: 2.5rem; }
+    .filters-actions { display: flex; gap: 0.75rem; margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--theme-border); }
+
     .data-table { width: 100%; border-collapse: collapse; }
     .data-table th, .data-table td { padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--theme-border); }
     .data-table th { background: var(--theme-surface-alt); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; }
@@ -59,28 +65,58 @@
 <body data-theme="light" data-module="signalisation" data-nav="signalisation" data-page="signalisation-admin">
   <script src="../js/core/config.js"></script>
   <script src="../js/core/network.js"></script>
+  <script src="../js/core/kind.js"></script>
   <script src="../js/core/layout.js"></script>
   <div id="loading" class="page-loading"><div class="loading-spinner"></div><p class="loading-text">Chargement...</p></div>
 
   <main id="main-content" class="main" style="display:none;">
     <div class="page-header"><div class="page-header__content"><h1 class="page-title">Gestion des signalisations</h1><p class="page-subtitle">Consulter et gérer tous les rapports</p></div></div>
 
+    <div class="filters-section" id="filters-section">
+      <div class="filters-header">
+        <div class="filters-title">🔍 Filtres</div>
+        <button class="filters-toggle" id="toggle-filters">Masquer</button>
+      </div>
+      <div id="filters-content">
+        <div class="filters-grid">
+          <div class="form-group">
+            <label class="form-label" for="filter-sector">Secteur</label>
+            <select class="form-select" id="filter-sector">
+              <option value="">Tous les secteurs</option><!-- filled by SectorService -->
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="filter-trail">Piste / Sentier</label>
+            <select class="form-select" id="filter-trail">
+              <option value="">Toutes les pistes</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="sort-by">Trier par</label>
+            <select class="form-select" id="sort-by">
+              <option value="date">Date</option>
+              <option value="sector">Secteur</option>
+            </select>
+          </div>
+          <div class="form-check">
+            <input type="checkbox" class="form-check-input" id="show-resolved">
+            <label class="form-check-label" for="show-resolved">Résolus</label>
+          </div>
+          <div class="form-check">
+            <input type="checkbox" class="form-check-input" id="show-archived">
+            <label class="form-check-label" for="show-archived">Archivés</label>
+          </div>
+        </div>
+        <div class="filters-actions">
+          <button class="btn btn-secondary btn-sm" id="refresh-btn">🔄 Actualiser</button>
+        </div>
+      </div>
+    </div>
+
     <section class="content-section">
       <div class="section-card">
         <div class="section-card__header">
           <h2 class="section-card__title">📋 Liste des rapports</h2>
-          <div class="filters-bar">
-            <select class="form-select" id="filter-sector">
-              <option value="">Tous les secteurs</option><!-- filled by SectorService -->
-            </select>
-            <select class="form-select" id="sort-by">
-              <option value="date">Trier par date</option>
-              <option value="sector">Trier par secteur</option>
-            </select>
-            <label><input type="checkbox" id="show-resolved"> Résolus</label>
-            <label><input type="checkbox" id="show-archived"> Archivés</label>
-            <button class="btn btn-secondary btn-sm" id="refresh-btn">🔄</button>
-          </div>
         </div>
         <div class="section-card__body" style="padding:0;">
           <div class="table-responsive">
@@ -91,12 +127,13 @@
                   <th>Secteur</th>
                   <th>Piste</th>
                   <th>Statut</th>
+                  <th>Photos</th>
                   <th>Inspecteur</th>
                   <th>État</th>
                 </tr>
               </thead>
               <tbody id="reports-tbody">
-                <tr class="empty-row"><td colspan="6">Chargement...</td></tr>
+                <tr class="empty-row"><td colspan="7">Chargement...</td></tr>
               </tbody>
             </table>
           </div>
@@ -137,6 +174,7 @@
   <script src="../js/services/map-service.js"></script>
   <script src="../js/services/photo-map-modal.js"></script>
   <script src="../js/services/sector-service.js"></script>
+  <script src="../js/services/trail-service.js"></script>
 
   <script>
     const STATUS_LABELS = {
@@ -156,8 +194,37 @@
     let showResolved = false;
     let showArchived = false;
     let filterSector = '';
+    let filterTrail = '';
     let sortBy = 'date';
-    let sectors = []; // every sector (names), from Firestore (SectorService)
+    let sectors = []; // this activity's sectors, with their trails (SectorService.load)
+    let allTrails = []; // every trail record (even hidden): tells which view (Montée / Descente) a report belongs to
+    let filtersVisible = true;
+
+    // A trail identifies a report by id when it has one, else by name (old reports)
+    const reportTrailKey = r => r.trailId || ('name:' + (r.trail || ''));
+
+    // Which map a record's photos should default to: its own trail's kind, else its sector's kind
+    // when every trail of that sector shares one (e.g. a sector used only for backcountry/
+    // randonnée alpine reports, with no specific trail selected) - else null (network default).
+    // See js/services/photo-map-modal.js for how `preferred` is used.
+    function geoMapFor(record) {
+      const sector = SectorService.find(sectors, record.sector);
+      const trail = sector && sector.items.find(i => i.id === record.trailId);
+      if (trail) return TrailService.geoMapIdOf(trail.kind);
+      if (sector && sector.items.length) {
+        const kinds = new Set(sector.items.map(i => i.kind));
+        if (kinds.size === 1) return TrailService.geoMapIdOf([...kinds][0]);
+      }
+      return null;
+    }
+
+    function toggleFilters() {
+      const content = document.getElementById('filters-content');
+      const btn = document.getElementById('toggle-filters');
+      filtersVisible = !filtersVisible;
+      content.style.display = filtersVisible ? 'block' : 'none';
+      btn.textContent = filtersVisible ? 'Masquer' : 'Afficher';
+    }
 
     // escapeHtml is now provided by utils.js
 
@@ -177,8 +244,10 @@
     // loaded the page still works with the name stored on each report.
     async function loadSectors() {
       try {
-        sectors = await SectorService.loadAll();
-        SectorService.fillSectors(document.getElementById('filter-sector'), await SectorService.load(), 'Tous les secteurs');
+        sectors = await SectorService.load();
+        allTrails = await SectorService.loadTrails();
+        // Montée / Descente (header switch): only the sectors and reports of the view shown
+        SectorService.fillSectors(document.getElementById('filter-sector'), SectorService.withKinds(sectors, TrailService.viewKinds()), 'Tous les secteurs');
       } catch (e) {
         console.error('Error loading sectors:', e);
       }
@@ -186,12 +255,35 @@
 
     const sectorNameOf = r => SectorService.nameOf(sectors, r.sector, r.sectorDisplayName);
 
+    // The trail dropdown narrows to filterSector's trails when one is chosen. Options are built
+    // from what's actually in reportsData, so a choice always narrows to something non-empty.
+    function updateTrailFilterOptions() {
+      const trailSelect = document.getElementById('filter-trail');
+      const trails = new Map(); // reportTrailKey -> name
+      reportsData.forEach(r => {
+        if (filterSector && SectorService.find(sectors, r.sector)?.id !== filterSector) return;
+        const key = reportTrailKey(r);
+        if (!trails.has(key)) trails.set(key, r.trail || key);
+      });
+      const trailOptions = Array.from(trails, ([id, name]) => ({ id, name }))
+        .sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+      trailSelect.replaceChildren(new Option('Toutes les pistes', ''), ...trailOptions.map(t => new Option(t.name, t.id)));
+      trailSelect.value = trailOptions.some(t => t.id === filterTrail) ? filterTrail : '';
+      filterTrail = trailSelect.value;
+    }
+
     function bindEvents() {
-      document.getElementById('filter-sector').addEventListener('change', (e) => { filterSector = e.target.value; renderReports(); });
+      document.getElementById('filter-sector').addEventListener('change', (e) => {
+        filterSector = e.target.value;
+        updateTrailFilterOptions(); // the trail list narrows to this sector's trails
+        renderReports();
+      });
+      document.getElementById('filter-trail').addEventListener('change', (e) => { filterTrail = e.target.value; renderReports(); });
       document.getElementById('sort-by').addEventListener('change', (e) => { sortBy = e.target.value; renderReports(); });
       document.getElementById('show-resolved').addEventListener('change', (e) => { showResolved = e.target.checked; loadReports(); });
       document.getElementById('show-archived').addEventListener('change', (e) => { showArchived = e.target.checked; loadReports(); });
       document.getElementById('refresh-btn').addEventListener('click', loadReports);
+      document.getElementById('toggle-filters').addEventListener('click', toggleFilters);
     }
 
     async function loadReports() {
@@ -206,11 +298,14 @@
           if (!showArchived && data.archived === true) return;
           reportsData.push(data);
         });
-        
+        // Only the view shown (Montée / Descente); a report whose trail cannot be told stays in both
+        reportsData = SectorService.inKinds(sectors, allTrails, reportsData, TrailService.viewKinds());
+
+        updateTrailFilterOptions();
         renderReports();
       } catch (e) {
         console.error('Error loading reports:', e);
-        document.getElementById('reports-tbody').innerHTML = '<tr class="empty-row"><td colspan="6" style="color:#ef4444;">Erreur de chargement</td></tr>';
+        document.getElementById('reports-tbody').innerHTML = '<tr class="empty-row"><td colspan="7" style="color:#ef4444;">Erreur de chargement</td></tr>';
       }
     }
 
@@ -220,6 +315,7 @@
       let filtered = [...reportsData];
       // Compare by current sector id so a record with an older id (alias) still matches
       if (filterSector) filtered = filtered.filter(r => SectorService.find(sectors, r.sector)?.id === filterSector);
+      if (filterTrail) filtered = filtered.filter(r => reportTrailKey(r) === filterTrail);
 
       if (sortBy === 'date') {
         filtered.sort((a, b) => (b.createdAt?.toDate?.() || 0) - (a.createdAt?.toDate?.() || 0));
@@ -228,7 +324,7 @@
       }
       
       if (filtered.length === 0) {
-        tbody.innerHTML = '<tr class="empty-row"><td colspan="6">Aucun rapport trouvé</td></tr>';
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="7">Aucun rapport trouvé</td></tr>';
         return;
       }
       
@@ -247,8 +343,9 @@
         if (r.resolved) etatBadges.push('<span class="badge badge--resolved">Résolu</span>');
         if (r.archived) etatBadges.push('<span class="badge badge--archived">Archivé</span>');
         const etatHtml = etatBadges.length ? `<div class="status-badges">${etatBadges.join('')}</div>` : '<span style="color:var(--theme-text-secondary);">Actif</span>';
-        
-        return `<tr data-id="${r.id}"><td>${dateStr}</td><td>${escapeHtml(sectorName)}</td><td>${escapeHtml(r.trail || '-')}</td><td>${statusHtml}</td><td>${escapeHtml(r.inspectorName || '-')}</td><td>${etatHtml}</td></tr>`;
+        const photoCount = PhotoService.photosFrom(r).length;
+
+        return `<tr data-id="${r.id}"><td>${dateStr}</td><td>${escapeHtml(sectorName)}</td><td>${escapeHtml(r.trail || '-')}</td><td>${statusHtml}</td><td><span class="badge badge-secondary">📷 ${photoCount}</span></td><td>${escapeHtml(r.inspectorName || '-')}</td><td>${etatHtml}</td></tr>`;
       }).join('');
       
       tbody.querySelectorAll('tr[data-id]').forEach(row => {
@@ -264,8 +361,6 @@
       const date = r.createdAt?.toDate?.();
       const dateStr = date ? date.toLocaleDateString('fr-CA', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-';
       const modifiedStr = r.modifiedAt?.toDate?.()?.toLocaleDateString('fr-CA', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) || '';
-      const sectorName = sectorNameOf(r);
-
       let statusHtml = '<span style="color:var(--theme-text-secondary);">Non spécifié</span>';
       if (r.status) {
         const badgeClass = STATUS_BADGE_CLASS[r.status] || '';
@@ -280,14 +375,10 @@
       const photos = PhotoService.photosFrom(r);
       
       if (photos.length > 0) {
+        const preferredMap = geoMapFor(r);
         photoHtml = '<div class="photo-gallery" style="display:flex;flex-wrap:wrap;gap:0.5rem;">';
         photos.forEach((photo, idx) => {
-          let locationHtml = '';
-          if (photo.coordinates && photo.coordinates.latitude && photo.coordinates.longitude) {
-            const lat = photo.coordinates.latitude;
-            const lon = photo.coordinates.longitude;
-            locationHtml = `<div class="photo-location"><a href="#" onclick="openPhotoLocationModal(${lat},${lon});return false;">📍 Carte</a><a href="https://www.google.com/maps?q=${lat},${lon}" target="_blank" rel="noopener noreferrer">🗺️</a></div>`;
-          }
+          const locationHtml = PhotoMapModal.locationLinks(photo, { collection: 'signalisations', docId: r.id, record: r, preferredMap, onChanged: async () => { await loadReports(); openDetail(r.id); } });
           photoHtml += `<div class="photo-gallery-item" style="position:relative;">
             <img src="${photo.url}" class="detail-photo" alt="Photo ${idx + 1}" onclick="window.open('${photo.url}', '_blank')" style="max-width:150px;max-height:150px;">
             ${locationHtml}
@@ -300,9 +391,10 @@
         <div class="detail-section">
           <h4>📍 Localisation</h4>
           <div class="detail-grid">
-            <div class="detail-item"><strong>Secteur</strong>${escapeHtml(sectorName)}</div>
-            <div class="detail-item"><strong>Piste</strong>${escapeHtml(r.trail || '-')}</div>
+            <div class="detail-item"><strong>Secteur</strong><select class="form-select" id="admin-sector" aria-label="Secteur"></select></div>
+            <div class="detail-item"><strong>Piste</strong><select class="form-select" id="admin-trail" aria-label="Piste"></select></div>
           </div>
+          <p class="form-hint" style="margin-top:0.5rem;">Corriger le secteur ou la piste d'un rapport : choisir une piste de Descente (ou de Montée) le fait passer dans cette vue.</p>
         </div>
         <div class="detail-section">
           <h4>📊 Statut de la signalisation</h4>
@@ -328,11 +420,55 @@
         </div>
       `;
       
+      fillLocationEditor(r);
       document.getElementById('modal-resolved').checked = r.resolved || false;
       document.getElementById('modal-archived').checked = r.archived || false;
       
       document.getElementById('detail-modal').classList.add('show');
       document.body.style.overflow = 'hidden';
+    }
+
+    // ---- Admin correction of a report's sector and trail --------------------------------------------
+    // All the sectors of this activity are offered (not only the view shown), and every kind of trail with
+    // its kind in brackets, so a report can be moved between Montée and Descente by choosing a trail of the
+    // other one. The activity itself never changes (the Firestore rules refuse it).
+    function fillTrailEditor(sectorId, selectedName, selectedId) {
+      const trailSelect = document.getElementById('admin-trail');
+      const sector = SectorService.find(sectors, sectorId);
+      SectorService.fillTrails(trailSelect, sector, '-- Sélectionner une piste --');
+      const kindOfId = {};
+      ((sector && sector.items) || []).forEach(i => { kindOfId[i.id] = i.kind; });
+      [...trailSelect.options].forEach(o => {
+        const kind = kindOfId[o.dataset.trailId];
+        if (kind) o.textContent += ' (' + TrailService.kindLabel(kind) + ')';
+      });
+      if (selectedName !== undefined) SectorService.selectTrail(trailSelect, selectedName, selectedId);
+    }
+
+    function fillLocationEditor(r) {
+      const sectorSelect = document.getElementById('admin-sector');
+      SectorService.fillSectors(sectorSelect, sectors, '-- Sélectionner un secteur --');
+      SectorService.selectSector(sectorSelect, sectors, r.sector);
+      fillTrailEditor(sectorSelect.value, r.trail, r.trailId);
+      sectorSelect.onchange = () => fillTrailEditor(sectorSelect.value); // a new sector: choose its trail again
+    }
+
+    // The location fields to write, only when the admin changed them (so resolving or commenting never
+    // rewrites an older report). Returns null when unchanged, false when the choice is incomplete.
+    function locationChanges(r) {
+      const sectorId = document.getElementById('admin-sector').value;
+      const chosen = SectorService.readTrail(document.getElementById('admin-trail'));
+      const originalSector = SectorService.find(sectors, r.sector);
+      const sameSector = sectorId === (originalSector ? originalSector.id : (r.sector || ''));
+      const sameTrail = (chosen.id || null) === (r.trailId || null) && (chosen.name || '') === (r.trail || '');
+      if (sameSector && sameTrail) return null;
+      if (!sectorId || !chosen.name) return false;
+      return {
+        sector: sectorId,
+        sectorDisplayName: SectorService.nameOf(sectors, sectorId),
+        trail: chosen.name,
+        trailId: chosen.id
+      };
     }
 
     function closeModal() {
@@ -347,7 +483,13 @@
       const adminComments = document.getElementById('admin-comments').value.trim();
       const resolved = document.getElementById('modal-resolved').checked;
       const archived = document.getElementById('modal-archived').checked;
-      
+      const report = reportsData.find(rep => rep.id === currentReportId);
+      const location = report ? locationChanges(report) : null;
+      if (location === false) {
+        showToast('Choisissez un secteur et une piste.', 'warning');
+        return;
+      }
+
       try {
         const updateData = {
           adminComments: adminComments || null,
@@ -356,12 +498,22 @@
           adminModifiedAt: firebase.firestore.FieldValue.serverTimestamp()
         };
         
+        if (location) Object.assign(updateData, location); // never "network": the activity cannot change
         if (resolved) updateData.resolvedAt = firebase.firestore.FieldValue.serverTimestamp();
         if (archived) updateData.archivedAt = firebase.firestore.FieldValue.serverTimestamp();
         
         await db.collection('signalisations').doc(currentReportId).update(updateData);
         
-        showToast('Modifications enregistrées', 'success');
+        // A report moved to a trail of the other view leaves this list: say where it went
+        let moved = '';
+        if (location && TrailService.viewKinds()) {
+          const kind = SectorService.kindOfReport(sectors, allTrails, { ...report, ...location });
+          if (kind && !TrailService.viewKinds().includes(kind)) {
+            const view = Kind.ids().find(k => TrailService.kindsInView(k).includes(kind)) || kind;
+            moved = `. Le rapport est maintenant dans la vue « ${TrailService.kindLabel(view)} » (changer de vue dans l'en-tête pour le voir)`;
+          }
+        }
+        showToast('Modifications enregistrées' + moved, 'success');
         closeModal();
         loadReports();
       } catch (e) {

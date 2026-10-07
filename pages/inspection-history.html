@@ -134,7 +134,8 @@
           <div class="form-group">
             <label class="form-label" for="date-filter">Période</label>
             <select class="form-select" id="date-filter">
-              <option value="all">Toutes les dates</option>
+              <option value="season" id="season-option">Saison en cours</option><!-- label filled with the dates -->
+              <option value="all">Toutes les saisons</option>
               <option value="today">Aujourd'hui</option>
               <option value="week">7 derniers jours</option>
               <option value="month">30 derniers jours</option>
@@ -261,6 +262,7 @@
     let sortDirection = 'desc';
     let filtersVisible = true;
     let isAdmin = false;
+    let isSystemAdmin = false; // deleting an inspection is reserved to the system admin
 
     // Elements
     const tableBody = document.getElementById('inspections-table');
@@ -280,6 +282,7 @@
         requiredPermission: 'allowInspection',
         onAuthenticated: async (userData) => {
           isAdmin = userData.role === 'admin' || userData.role === 'system_admin';
+          isSystemAdmin = userData.role === 'system_admin';
           // Show admin nav links if user is admin
           if (isAdmin) {
             document.querySelectorAll('.nav__link--admin, .mobile-nav__link--admin').forEach(el => el.style.display = '');
@@ -297,8 +300,8 @@
       document.getElementById('location-filter').addEventListener('change', applyFilters);
       document.getElementById('inspector-filter').addEventListener('change', applyFilters);
       document.getElementById('search-input').addEventListener('input', debounce(applyFilters, 300));
-      document.getElementById('start-date').addEventListener('change', applyFilters);
-      document.getElementById('end-date').addEventListener('change', applyFilters);
+      document.getElementById('start-date').addEventListener('change', filterWithHistory);
+      document.getElementById('end-date').addEventListener('change', filterWithHistory);
       document.getElementById('reset-filters').addEventListener('click', resetFilters);
       document.getElementById('apply-filters').addEventListener('click', applyFilters);
       document.getElementById('page-size').addEventListener('change', e => { pageSize = parseInt(e.target.value); currentPage = 1; updateDisplay(); });
@@ -320,7 +323,15 @@
       return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), delay); };
     }
 
-    async function loadAllData() {
+    // Only the current season is read at first (Network.seasonStart, same rule for ski and bike); the
+    // whole history is read once, the first time a period needing it is chosen (see historyNeedsFull).
+    let loadedFullHistory = false;
+
+    async function loadAllData(full = false) {
+      loadedFullHistory = full;
+      const since = full ? null : firebase.firestore.Timestamp.fromDate(Network.seasonStart());
+      const readInspections = name => (since ? db.collection(name).where('date', '>=', since).orderBy('date', 'desc') : db.collection(name)).get();
+      document.getElementById('season-option').textContent = Network.seasonLabel(Network.seasonRange());
       try {
         // Load trails (this activity's only, of the kind currently shown - kind.js + header switcher)
         const trailsSnap = await db.collection('trails').get();
@@ -342,7 +353,7 @@
         inspSnap.forEach(doc => inspectors.set(doc.id, doc.data().name));
 
         // Load trail inspections
-        const trailInspSnap = await db.collection('trail_inspections').get();
+        const trailInspSnap = await readInspections('trail_inspections');
         const trailInsp = trailInspSnap.docs.filter(doc => trails.has(doc.data().trail_id)).map(doc => { // this activity's trails only
           const d = doc.data();
           const trail = trails.get(d.trail_id);
@@ -367,7 +378,7 @@
         });
 
         // Load shelter inspections
-        const shelterInspDocs = shelters.size ? (await db.collection('shelter_inspections').get()).docs : [];
+        const shelterInspDocs = shelters.size ? (await readInspections('shelter_inspections')).docs : [];
         const shelterInsp = shelterInspDocs.filter(doc => shelters.has(doc.data().shelter_id)).map(doc => { // this activity's shelters only
           const d = doc.data();
           const shelter = shelters.get(d.shelter_id);
@@ -410,11 +421,13 @@
 
       // Inspector filter
       const inspectorFilter = document.getElementById('inspector-filter');
+      const chosenInspector = inspectorFilter.value;
       const uniqueInspectors = [...new Set(allInspections.map(i => i.inspector))].filter(Boolean).sort();
       inspectorFilter.innerHTML = '<option value="all">Tous les inspecteurs</option>';
       uniqueInspectors.forEach(name => {
         inspectorFilter.innerHTML += `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
       });
+      if ([...inspectorFilter.options].some(o => o.value === chosenInspector)) inspectorFilter.value = chosenInspector;
     }
 
     function updateLocationFilter() {
@@ -445,11 +458,31 @@
     function handleDateFilterChange() {
       const value = document.getElementById('date-filter').value;
       document.getElementById('custom-date-range').classList.toggle('show', value === 'custom');
-      applyFilters();
+      filterWithHistory();
+    }
+
+    // Does the chosen period reach back before the current season, which is all that is loaded at first?
+    function historyNeedsFull() {
+      const value = document.getElementById('date-filter').value;
+      const seasonStart = Network.seasonStart();
+      if (value === 'all') return true;
+      if (value === 'month') return new Date(new Date().getFullYear(), new Date().getMonth() - 1, new Date().getDate()) < seasonStart;
+      if (value === 'week') return new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) < seasonStart;
+      if (value === 'custom') {
+        const start = document.getElementById('start-date').value;
+        return !start || new Date(start) < seasonStart;
+      }
+      return false; // season, today
+    }
+
+    // Apply the filters, reading the full history first (once) when the period needs it
+    async function filterWithHistory() {
+      if (historyNeedsFull() && !loadedFullHistory) await loadAllData(true); // ends with applyFilters()
+      else applyFilters();
     }
 
     function resetFilters() {
-      document.getElementById('date-filter').value = 'all';
+      document.getElementById('date-filter').value = 'season';
       document.getElementById('type-filter').value = 'all';
       document.getElementById('location-filter').value = 'all';
       document.getElementById('inspector-filter').value = 'all';
@@ -485,6 +518,8 @@
         const now = new Date();
         if (dateFilter === 'today') {
           if (!isSameDay(inspDate, now)) return false;
+        } else if (dateFilter === 'season') {
+          if (inspDate < Network.seasonStart()) return false;
         } else if (dateFilter === 'week') {
           const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
           if (inspDate < weekAgo) return false;
@@ -578,7 +613,7 @@
           <td>${escapeHtml(insp.inspector || 'Inconnu')}</td>
           <td>${conditionBadge}</td>
           <td><span class="badge badge-secondary">📷 ${photoCount}</span></td>
-          <td><div class="action-btns"><button class="btn btn-sm btn-primary" onclick="viewDetails('${insp.id}')" title="Voir détails">👁️</button>${isAdmin ? `<button class="btn btn-sm btn-danger" onclick="deleteInspection('${insp.id}', event)" title="Supprimer">🗑️</button>` : ''}</div></td>
+          <td><div class="action-btns"><button class="btn btn-sm btn-primary" onclick="viewDetails('${insp.id}')" title="Voir détails">👁️</button>${isSystemAdmin ? `<button class="btn btn-sm btn-danger" onclick="deleteInspection('${insp.id}', event)" title="Supprimer">🗑️</button>` : ''}</div></td>
         </tr>`;
       }).join('');
 
@@ -690,16 +725,20 @@
         html += `<div class="detail-section"><div class="detail-section__title">📝 Notes</div><div class="detail-notes">${escapeHtml(insp.notes)}</div></div>`;
       }
 
-      // Photos - already normalised by PhotoService at load time. A photo belongs on the one map
-      // of its own trail's kind, or the network's main map for a shelter (shelters are not kind-
-      // specific) - never necessarily Kind.current(), even though every trail entry shown here
-      // happens to match it today (history filters trails by it too).
+      // Photos - already normalised by PhotoService at load time. A photo opens by default on its
+      // own trail kind's GPS map (geoMapIdOf - may differ from the kind's status-marker map), or
+      // falls back to the network default for a shelter (shelters are not kind-specific) - never
+      // necessarily Kind.current(), even though every trail entry shown here happens to match it
+      // today (history filters trails by it too). The full report-maps switch is still offered.
       if (insp.photos && insp.photos.length > 0) {
-        const photoMapId = insp.type === 'trail' ? TrailService.mapIdOf(trails.get(insp.locationId)) : Network.config().map;
+        const photoMapId = insp.type === 'trail' ? TrailService.geoMapIdOf(trails.get(insp.locationId)) : null;
         html += `<div class="detail-section"><div class="detail-section__title">📷 Photos (${insp.photos.length})</div><div class="detail-photos">${insp.photos.map(p => {
-          const coords = p.coordinates;
-          let loc = '';
-          if (coords && coords.latitude && coords.longitude) loc = `<div class="photo-location"><a href="#" onclick="openPhotoLocationModal(${coords.latitude},${coords.longitude},['${photoMapId}']);return false;" title="Carte locale">📍 Carte</a> <a href="https://www.google.com/maps?q=${coords.latitude},${coords.longitude}" target="_blank" rel="noopener noreferrer" title="Google Maps" aria-label="Google Maps">🗺️</a></div>`;
+          // 📍 Carte / Google Maps, and ✏️ for the inspector who made it or an admin (hand-set position)
+          const loc = PhotoMapModal.locationLinks(p, {
+            collection: insp.type === 'trail' ? 'trail_inspections' : 'shelter_inspections',
+            docId: insp.id, record: insp.raw, preferredMap: photoMapId,
+            onChanged: async () => { await loadAllData(loadedFullHistory); viewDetails(insp.id); }
+          });
           return `<div class="detail-photo"><img src="${p.url}" alt="Photo" onclick="window.open('${p.url}','_blank')">${loc}</div>`;
         }).join('')}</div></div>`;
       }
@@ -737,8 +776,8 @@
         return;
       }
       
-      if (!isAdmin) {
-        console.log('Not admin, aborting');
+      if (!isSystemAdmin) {
+        console.log('Not system admin, aborting');
         return;
       }
       

@@ -273,15 +273,7 @@ function showAccessDenied(message) {
  * Redirect to login page
  */
 function redirectToLogin() {
-  const currentPath = window.location.pathname;
-  
-  // Determine correct path to login
-  let loginPath;
-  if (currentPath.includes('/pages/')) {
-    loginPath = 'login.html';
-  } else {
-    loginPath = 'pages/login.html';
-  }
+  const loginPath = siteUrl('pages/login.html');
 
   // Add return URL
   const returnUrl = encodeURIComponent(window.location.href);
@@ -292,17 +284,7 @@ function redirectToLogin() {
  * Redirect to portal
  */
 function redirectToPortal() {
-  const currentPath = window.location.pathname;
-  
-  // Determine correct path to portal
-  let portalPath;
-  if (currentPath.includes('/pages/')) {
-    portalPath = '../index.html';
-  } else {
-    portalPath = 'index.html';
-  }
-
-  window.location.href = portalPath;
+  window.location.href = siteUrl('index.html');
 }
 
 /**
@@ -339,20 +321,6 @@ async function login(email, password) {
     return userCredential.user;
   } catch (error) {
     console.error('Login error:', error);
-    throw error;
-  }
-}
-
-/**
- * Send password reset email
- * @param {string} email - User email
- */
-async function sendPasswordReset(email) {
-  try {
-    await auth.sendPasswordResetEmail(email);
-    return true;
-  } catch (error) {
-    console.error('Password reset error:', error);
     throw error;
   }
 }
@@ -413,7 +381,6 @@ if (typeof module !== 'undefined' && module.exports) {
     checkAuthStatus,
     login,
     handleLogout,
-    sendPasswordReset,
     updatePassword,
     getAuthErrorMessage,
     redirectToLogin,

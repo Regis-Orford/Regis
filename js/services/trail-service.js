@@ -71,6 +71,35 @@ const TrailService = (function () {
     return (APP_CONFIG.trailKinds[kind] || {}).map || null;
   }
 
+  /**
+   * The kinds of the current activity that share a map with `kind` - what one view of the header
+   * Montée / Descente switch covers. Ski: uphill alone on the touring map; downhill AND lift on
+   * the downhill map. Bike: just bike.
+   */
+  function kindsInView(kind, networkId) {
+    const network = APP_CONFIG.networks[networkId || Network.current()];
+    const map = mapIdOf(kind);
+    return ((network && network.trailKinds) || []).filter(k => mapIdOf(k) === map);
+  }
+
+  /** The kinds of the view currently selected in the header switch (Kind.current()), or null when there is no switch. */
+  function viewKinds() {
+    const kind = typeof Kind !== 'undefined' ? Kind.current() : null;
+    return kind ? kindsInView(kind) : null;
+  }
+
+  /**
+   * The id of the map (APP_CONFIG.maps) that a kind of trail's GPS-derived photo pins are placed
+   * on (inspection dashboard/history) - a kind can use a separate, GPS-calibrated map for this
+   * from the one its status markers are placed on (trailKinds.<kind>.geoMap), falling back to
+   * mapIdOf when it has none.
+   */
+  function geoMapIdOf(kindOrTrail) {
+    const kind = typeof kindOrTrail === 'string' ? kindOrTrail : kindOf(kindOrTrail);
+    const conf = APP_CONFIG.trailKinds[kind] || {};
+    return conf.geoMap || conf.map || null;
+  }
+
   /** The checklist of common issues (APP_CONFIG.trailKinds.<kind>.issues) for a kind of trail, or a trail. */
   function issuesOf(kindOrTrail) {
     const kind = typeof kindOrTrail === 'string' ? kindOrTrail : kindOf(kindOrTrail);
@@ -131,6 +160,6 @@ const TrailService = (function () {
     return `${prefix}_${Math.max(0, ...used) + 1}`;
   }
 
-  return { kindOf, kindLabel, scaleOf, difficultyOf, difficultyLabel, isInspected, isArchived, isActive, mapIdOf, issuesOf, statusOf, statusText, conditionText, conditionIcon, markerLabel, describe, compare, nextId };
+  return { kindOf, kindLabel, scaleOf, difficultyOf, difficultyLabel, isInspected, isArchived, isActive, mapIdOf, kindsInView, viewKinds, geoMapIdOf, issuesOf, statusOf, statusText, conditionText, conditionIcon, markerLabel, describe, compare, nextId };
 })();
 window.TrailService = TrailService;

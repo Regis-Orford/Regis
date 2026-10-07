@@ -24,11 +24,12 @@
   if (!nav) return;
   const pageId = body.dataset.page;
 
-  // Config paths are relative to the site root; pages live in /pages/
-  const inPages = window.location.pathname.includes('/pages/');
-  const url = path => (inPages ? (path.startsWith('pages/') ? path.slice('pages/'.length) : '../' + path) : path);
+  // Config paths are written from the site root; siteUrl() (config.js) makes them valid from this page
+  const url = path => siteUrl(path);
 
-  const HOME = { id: 'portal', label: 'Portail', icon: '🏠', href: 'index.html' };
+  // The logo + name (banner and mobile drawer) is the way back to the portal: there is no
+  // separate "Portail" link in the menus any more (public-status.html has its own header).
+  const PORTAL_HREF = 'index.html';
   const PROFILE = { id: 'user-profile', label: 'Mon profil', icon: '👤', href: 'pages/user-profile.html' };
 
   // Admin-only links start hidden; auth.js shows [data-require-admin] for admins.
@@ -44,17 +45,13 @@
 
   // ---- Desktop nav ----------------------------------------------------------
   function desktopLink(item) {
-    const showIcon = item.id === HOME.id || nav.desktopIcons !== false;
+    const showIcon = nav.desktopIcons !== false;
     const inner = `${showIcon ? `<span>${item.icon}</span>` : ''}<span>${item.label}</span>`;
     if (item.id === pageId) return `<span class="nav__link nav__link--active">${inner}</span>`;
     return `<a href="${url(item.href)}" class="nav__link${item.admin ? ' nav__link--admin' : ''}"${itemAttrs(item)}>${inner}</a>`;
   }
 
-  const desktopLinks = [desktopLink(HOME)];
-  if (nav.items.length) {
-    desktopLinks.push('<div class="nav__divider"></div>');
-    nav.items.forEach(item => desktopLinks.push(desktopLink(item)));
-  }
+  const desktopLinks = nav.items.map(desktopLink);
 
   // ---- Mobile drawer --------------------------------------------------------
   function mobileLink(item) {
@@ -78,20 +75,23 @@
   const logoIcon = brand.logoImage
     ? `<img class="logo__image" src="${url(brand.logoImage)}" alt="">`
     : `<span class="logo__icon">${brand.logo}</span>`;
-  const logoText = `<span class="logo__text">${brand.name}${nav.title ? `<span class="logo__sep">  -  </span><span class="logo__app">${nav.title}</span>` : ''}</span>`;
+  // Only the logo and the name (REGIS) lead back to the portal; the app's own name ("  -  Inspections")
+  // beside it is plain text, so clicking it inside an app does not leave the app.
+  const portalLink = `href="${url(PORTAL_HREF)}" title="Retour au portail"`;
+  const appPart = nav.title ? `<span class="logo__sep">  -  </span><span class="logo__app">${nav.title}</span>` : '';
 
   const html = `
     <a href="#main-content" class="skip-link">Aller au contenu principal</a>
 
     <header class="header">
       <div class="logo">
-        ${logoIcon}
-        ${logoText}
+        <a class="logo__link" ${portalLink} aria-label="Retour au portail">${logoIcon}<span class="logo__text">${brand.name}</span></a>
+        ${appPart ? `<span class="logo__text logo__rest">${appPart}</span>` : ''}
       </div>
 
       <nav class="nav">
-        ${desktopLinks.join('\n        ')}
-        <div class="nav__divider"></div>
+        ${desktopLinks.length ? `${desktopLinks.join('\n        ')}
+        <div class="nav__divider"></div>` : ''}
         <button type="button" class="network-switch" id="network-switch" hidden></button>
         <button type="button" class="network-switch" id="kind-switch" hidden></button>
         <button class="theme-toggle" onclick="window.themeManager.toggle()" aria-label="Changer le thème" title="Changer le thème">
@@ -121,7 +121,10 @@
     <div class="mobile-nav__backdrop" id="mobile-nav-backdrop"></div>
     <nav class="mobile-nav" id="mobile-nav">
       <div class="mobile-nav__header">
-        <div class="mobile-nav__logo">${logoIcon}${logoText}</div>
+        <div class="mobile-nav__logo">
+          <a ${portalLink} tabindex="-1" aria-hidden="true">${logoIcon}</a>
+          <span class="logo__text"><a class="logo__name" ${portalLink} aria-label="Retour au portail">${brand.name}</a>${appPart}</span>
+        </div>
         <button class="mobile-nav__close" id="mobile-nav-close" aria-label="Fermer">${closeIcon}</button>
       </div>
 
@@ -138,11 +141,7 @@
         <div class="mobile-nav__section-title">Vue</div>
       </div>
 
-      <div class="mobile-nav__section">
-        ${mobileLink(HOME)}
-      </div>
-      ${mobileItems.length ? `<div class="mobile-nav__divider"></div>
-      <div class="mobile-nav__section">
+      ${mobileItems.length ? `<div class="mobile-nav__section">
         ${mobileItems.join('\n        ')}
       </div>` : ''}
       <div class="mobile-nav__divider"></div>
@@ -198,13 +197,13 @@
   });
 
   // ---- Kind switcher (uphill/downhill for ski) ---------------------------------------------
-  // Only on inspection pages, and only when the activity inspects more than one kind (kind.js
-  // fires "kindReady" once network.js knows the activity). Switching reloads the page, like the
-  // activity switch above, so every inspection page (dashboard, trail/shelter report, history,
-  // admin) picks it up the same way without each one needing its own toggle.
+  // Only on the inspection and signalisation pages, and only when the activity has more than one
+  // kind (kind.js fires "kindReady" once network.js knows the activity). Switching reloads the
+  // page, like the activity switch above, so every page of those two apps picks it up the same
+  // way without each one needing its own toggle.
   document.addEventListener('kindReady', event => {
     const { current, ids } = event.detail;
-    if (nav !== APP_CONFIG.nav.inspection || ids.length < 2) return;
+    if ((nav !== APP_CONFIG.nav.inspection && nav !== APP_CONFIG.nav.signalisation) || ids.length < 2) return;
 
     const label = id => TrailService.kindLabel(id);
     const icon = id => { const m = APP_CONFIG.maps[TrailService.mapIdOf(id)]; return m ? m.icon : ''; };

@@ -77,11 +77,30 @@
 <body data-theme="light" data-module="signalisation" data-nav="signalisation" data-page="signalisation-resume">
   <script src="../js/core/config.js"></script>
   <script src="../js/core/network.js"></script>
+  <script src="../js/core/kind.js"></script>
   <script src="../js/core/layout.js"></script>
   <div id="loading" class="page-loading"><div class="loading-spinner"></div><p class="loading-text">Chargement...</p></div>
 
   <main id="main-content" class="main" style="display:none;">
     <div class="page-header"><div class="page-header__content"><h1 class="page-title">Résumé des signalisations</h1><p class="page-subtitle">Vue d'ensemble des rapports actifs</p></div></div>
+
+    <!-- Filters: apply to both the map and the table below -->
+    <section class="content-section" style="margin-bottom:1rem;">
+      <div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:flex-end;">
+        <div class="form-group" style="margin-bottom:0; min-width:180px;">
+          <label class="form-label" for="filter-sector">Secteur</label>
+          <select class="form-select" id="filter-sector">
+            <option value="">Tous les secteurs</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin-bottom:0; min-width:180px;">
+          <label class="form-label" for="filter-trail">Piste / Sentier</label>
+          <select class="form-select" id="filter-trail">
+            <option value="">Toutes les pistes</option>
+          </select>
+        </div>
+      </div>
+    </section>
 
     <!-- Map Section -->
     <section class="map-section">
@@ -156,6 +175,7 @@
   <script src="../js/services/map-service.js"></script>
   <script src="../js/services/photo-map-modal.js"></script>
   <script src="../js/services/sector-service.js"></script>
+  <script src="../js/services/trail-service.js"></script>
 
   <script>
     const STATUS_LABELS = {
@@ -178,12 +198,85 @@
 
     let reportsData = [];
     let currentReportId = null;
-    let sectors = []; // every sector (names), from Firestore (SectorService)
+    let sectors = []; // this activity's sectors, with their trails (SectorService.load)
+    let allTrails = []; // every trail record (even hidden): tells which view (Montée / Descente) a report belongs to
+    // Filters: options are built from what's actually in reportsData, so a choice always
+    // narrows to something non-empty. Apply to both the map markers and the table.
+    let filterSector = '';
+    let filterTrail = '';
 
     // If the sectors cannot be loaded the page still shows the name stored on each report
     const sectorNameOf = r => SectorService.nameOf(sectors, r.sector, r.sectorDisplayName);
+    // A trail identifies a report by id when it has one, else by name (old reports)
+    const reportTrailKey = r => r.trailId || ('name:' + (r.trail || ''));
 
-    // The map shown (ski: the downhill or the touring map, switchable). GPS -> pixel on that map;
+    // Which map a record's photos should default to: its own trail's kind, else its sector's kind
+    // when every trail of that sector shares one (e.g. a sector used only for backcountry/
+    // randonnée alpine reports, with no specific trail selected) - else null (network default).
+    // See js/services/photo-map-modal.js for how `preferred` is used.
+    function geoMapFor(record) {
+      const sector = SectorService.find(sectors, record.sector);
+      const trail = sector && sector.items.find(i => i.id === record.trailId);
+      if (trail) return TrailService.geoMapIdOf(trail.kind);
+      if (sector && sector.items.length) {
+        const kinds = new Set(sector.items.map(i => i.kind));
+        if (kinds.size === 1) return TrailService.geoMapIdOf([...kinds][0]);
+      }
+      return null;
+    }
+
+    function visibleReports() {
+      let list = reportsData;
+      if (filterSector) list = list.filter(r => r.sector === filterSector);
+      if (filterTrail) list = list.filter(r => reportTrailKey(r) === filterTrail);
+      return list;
+    }
+
+    // Rebuilds the two filter dropdowns from what's actually in reportsData, keeping the
+    // current selection when it is still an option (otherwise resetting to "all").
+    function updateFilterOptions() {
+      const sectorIds = new Set();
+      reportsData.forEach(r => { if (r.sector) sectorIds.add(r.sector); });
+
+      const sectorSelect = document.getElementById('filter-sector');
+      const sectorOptions = Array.from(sectorIds, id => ({ id, name: SectorService.nameOf(sectors, id, id) }))
+        .sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+      sectorSelect.replaceChildren(new Option('Tous les secteurs', ''), ...sectorOptions.map(s => new Option(s.name, s.id)));
+      sectorSelect.value = sectorOptions.some(s => s.id === filterSector) ? filterSector : '';
+      filterSector = sectorSelect.value;
+
+      updateTrailFilterOptions();
+    }
+
+    // The trail dropdown narrows to filterSector's trails when one is chosen.
+    function updateTrailFilterOptions() {
+      const trailSelect = document.getElementById('filter-trail');
+      const trails = new Map(); // reportTrailKey -> name
+      reportsData.forEach(r => {
+        if (filterSector && r.sector !== filterSector) return;
+        const key = reportTrailKey(r);
+        if (!trails.has(key)) trails.set(key, r.trail || key);
+      });
+      const trailOptions = Array.from(trails, ([id, name]) => ({ id, name }))
+        .sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+      trailSelect.replaceChildren(new Option('Toutes les pistes', ''), ...trailOptions.map(t => new Option(t.name, t.id)));
+      trailSelect.value = trailOptions.some(t => t.id === filterTrail) ? filterTrail : '';
+      filterTrail = trailSelect.value;
+    }
+
+    // Montée / Descente (header switch, like Inspections): the dashboard shows the reports of the view
+    // shown, on that view's own map - so no map switch is needed any more. Descente covers downhill
+    // runs and lifts (same map). A report whose trail cannot be told (old report) shows in both views.
+    const inView = list => SectorService.inKinds(sectors, allTrails, list, TrailService.viewKinds());
+    function viewMaps() {
+      const offered = MapService.reportMaps().all;
+      const kinds = TrailService.viewKinds();
+      if (!kinds) return offered;
+      const wanted = [...new Set(kinds.map(k => TrailService.geoMapIdOf(k)))].filter(id => offered.includes(id));
+      return wanted.length ? wanted : offered;
+    }
+
+    // The map shown (ski: the downhill or the touring map). GPS -> pixel on that map;
     // null when the map has no calibration.
     let resumeMap = null;
     const gpsToPixel = (lat, lon) => MapService.gpsToPixel(lat, lon, resumeMap);
@@ -201,14 +294,28 @@
             document.querySelectorAll('.nav__link--admin, .mobile-nav__link--admin').forEach(el => el.style.display = '');
           }
           try {
-            sectors = await SectorService.loadAll();
+            sectors = await SectorService.load();
+            allTrails = await SectorService.loadTrails();
           } catch (e) {
             console.error('Error loading sectors:', e);
           }
           await MapService.load(); // the GPS calibrations (markers below need them)
-          resumeMap = MapService.reportMaps().default;
+          resumeMap = viewMaps()[0] || MapService.reportMaps().default;
           buildMapSwitch();
           MapService.showImage(document.getElementById('map-image'), resumeMap);
+
+          document.getElementById('filter-sector').addEventListener('change', (e) => {
+            filterSector = e.target.value;
+            updateTrailFilterOptions(); // the trail list narrows to this sector's trails
+            renderMapMarkers();
+            renderReportsTable();
+          });
+          document.getElementById('filter-trail').addEventListener('change', (e) => {
+            filterTrail = e.target.value;
+            renderMapMarkers();
+            renderReportsTable();
+          });
+
           loadReports();
         }
       });
@@ -228,7 +335,9 @@
           const data = { id: doc.id, ...doc.data() };
           if (Network.matches(data)) reportsData.push(data); // this activity's reports only
         });
+        reportsData = inView(reportsData);
 
+        updateFilterOptions();
         renderMapMarkers();
         renderReportsTable();
       } catch (e) {
@@ -243,6 +352,8 @@
               reportsData.push({ id: doc.id, ...data });
             }
           });
+          reportsData = inView(reportsData);
+          updateFilterOptions();
           renderMapMarkers();
           renderReportsTable();
         } catch (e2) {
@@ -254,7 +365,7 @@
 
     // One button per map of the activity (only when there are several)
     function buildMapSwitch() {
-      const { all } = MapService.reportMaps();
+      const all = viewMaps();
       const box = document.getElementById('map-switch');
       box.replaceChildren();
       box.hidden = all.length < 2;
@@ -281,7 +392,7 @@
       
       // Reports with GPS coordinates, if this activity's map can place them
       const reportsWithGps = MapService.canLocate(resumeMap)
-        ? reportsData.filter(r => r.coordinates && r.coordinates.latitude && r.coordinates.longitude &&
+        ? visibleReports().filter(r => r.coordinates && r.coordinates.latitude && r.coordinates.longitude &&
             gpsToPixel(r.coordinates.latitude, r.coordinates.longitude))
         : [];
       document.getElementById('map-count').textContent = MapService.canLocate(resumeMap)
@@ -307,14 +418,15 @@
 
     function renderReportsTable() {
       const tbody = document.getElementById('reports-tbody');
-      document.getElementById('reports-count').textContent = `${reportsData.length} rapport(s)`;
-      
-      if (reportsData.length === 0) {
+      const filtered = visibleReports();
+      document.getElementById('reports-count').textContent = `${filtered.length} rapport(s)`;
+
+      if (filtered.length === 0) {
         tbody.innerHTML = '<tr class="empty-row"><td colspan="5">Aucun rapport actif</td></tr>';
         return;
       }
-      
-      tbody.innerHTML = reportsData.map(r => {
+
+      tbody.innerHTML = filtered.map(r => {
         const date = r.createdAt?.toDate?.();
         const dateStr = date ? date.toLocaleDateString('fr-CA', { year: 'numeric', month: 'short', day: 'numeric' }) : '-';
         const sectorName = sectorNameOf(r);
@@ -352,17 +464,13 @@
       
       // Photos with GPS location - retrocompat: support both old photoUrl and new photos array
       let photoHtml = '<p style="color:var(--theme-text-secondary);">Aucune photo</p>';
-      const photos = r.photos || (r.photoUrl ? [{ url: r.photoUrl, coordinates: r.coordinates }] : []);
+      const photos = PhotoService.photosFrom(r);
       
       if (photos.length > 0) {
+        const preferredMap = geoMapFor(r);
         photoHtml = '<div class="photo-gallery" style="display:flex;flex-wrap:wrap;gap:0.5rem;">';
         photos.forEach((photo, idx) => {
-          let locationHtml = '';
-          if (photo.coordinates && photo.coordinates.latitude && photo.coordinates.longitude) {
-            const lat = photo.coordinates.latitude;
-            const lon = photo.coordinates.longitude;
-            locationHtml = `<div class="photo-location"><a href="#" onclick="openPhotoLocationModal(${lat},${lon});return false;">📍 Carte</a><a href="https://www.google.com/maps?q=${lat},${lon}" target="_blank" rel="noopener noreferrer">🗺️</a></div>`;
-          }
+          const locationHtml = PhotoMapModal.locationLinks(photo, { collection: 'signalisations', docId: r.id, record: r, preferredMap, onChanged: async () => { await loadReports(); openDetailModal(r.id); } });
           photoHtml += `<div class="photo-gallery-item" style="position:relative;">
             <img src="${photo.url}" class="detail-photo" alt="Photo ${idx + 1}" onclick="window.open('${photo.url}', '_blank')" style="max-width:150px;max-height:150px;">
             ${locationHtml}

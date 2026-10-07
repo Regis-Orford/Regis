@@ -1,13 +1,13 @@
 /**
- * trail-admin.js - Administration > Sentiers (admins) and its sectors (system admins)
- * ====================================================================================
+ * trail-admin.js - Administration > Sentiers and its sectors (system admin only)
+ * ===============================================================================
  * Lists, creates and edits the trails of an activity (Firestore trails/{id}): name, number
  * (shown on the map markers), kind (uphill / downhill / lift / bike), sector, difficulty (the
  * scale of that kind), length (optional, information), and the position on the map, pinpointed
  * by clicking on it. The status (open / closed) is set by inspections, not here.
  *
  * Sectors (the areas the infraction and signalisation forms group trails under) are managed
- * here too, by system admins only: they add, rename and order sectors, assign the sector of
+ * here too: the system admin adds, renames and orders sectors, assigns the sector of
  * trails (one by one or several at once). A trail without a sector is highlighted: the forms
  * cannot offer it.
  *
@@ -36,13 +36,13 @@ const TrailAdmin = (function () {
     mapId: null,       // the map currently shown
     trails: [],        // every trail of every activity: { id, ...data }
     sectors: [],       // every sector of every activity (SectorService.loadAll)
+    shelters: [],      // every shelter of every activity: { id, ...data }
     selected: new Set(), // trail ids ticked for a bulk sector assignment
     editing: null,     // { id: string|null, trail: object|null } while the editor is open
     placing: false,    // the next click on the map sets the position
     position: null     // { left, top } of the trail being edited
   };
   let userId = null;
-  let isSystemAdmin = false;
 
   const kindsOfNetwork = () => APP_CONFIG.networks[state.network].trailKinds;
   const inNetwork = () => state.trails.filter(t => Network.of(t) === state.network);
@@ -72,6 +72,13 @@ const TrailAdmin = (function () {
       showMessage('Erreur lors du chargement des sentiers.', 'error');
       state.trails = [];
     }
+    try {
+      const shelters = await window.db.collection('shelters').get();
+      state.shelters = shelters.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    } catch (error) {
+      console.error('Error loading shelters:', error);
+      state.shelters = [];
+    }
     renderAll();
   }
 
@@ -90,6 +97,7 @@ const TrailAdmin = (function () {
     renderList();
     renderOrphanBanner();
     renderSectorPanel();
+    renderShelterPanel();
     drawMarkers();
   }
 
@@ -124,15 +132,14 @@ const TrailAdmin = (function () {
     const banner = $('trail-orphan-banner');
     banner.hidden = count === 0;
     if (!count) return;
-    $('trail-orphan-text').textContent = `${count} sentier${count > 1 ? 's' : ''} sans secteur : ${count > 1 ? 'ils ne sont pas proposés' : 'il n\'est pas proposé'} dans les formulaires d'infractions et de signalisations.` +
-      (isSystemAdmin ? '' : ' Un system admin doit leur attribuer un secteur.');
+    $('trail-orphan-text').textContent = `${count} sentier${count > 1 ? 's' : ''} sans secteur : ${count > 1 ? 'ils ne sont pas proposés' : 'il n\'est pas proposé'} dans les formulaires d'infractions et de signalisations.`;
   }
 
   function renderList() {
     const body = $('trail-rows');
     body.replaceChildren();
     const rows = visibleRows();
-    const columns = isSystemAdmin ? 10 : 9;
+    const columns = 10;
 
     $('trail-count').textContent = `(${rows.length})`;
     updateSelectedCount();
@@ -162,16 +169,14 @@ const TrailAdmin = (function () {
 
       const archived = TrailService.isArchived(t);
       const row = el('tr', 'trail-row' + (archived ? ' is-archived' : '') + (sector ? '' : ' is-orphan') + (state.editing && state.editing.id === t.id ? ' is-selected' : ''));
-      if (isSystemAdmin) {
-        const box = el('td');
-        const check = document.createElement('input');
-        check.type = 'checkbox';
-        check.checked = state.selected.has(t.id);
-        check.setAttribute('aria-label', `Cocher ${t.name || t.id}`);
-        check.addEventListener('change', () => { check.checked ? state.selected.add(t.id) : state.selected.delete(t.id); updateSelectedCount(); });
-        box.appendChild(check);
-        row.appendChild(box);
-      }
+      const box = el('td');
+      const check = document.createElement('input');
+      check.type = 'checkbox';
+      check.checked = state.selected.has(t.id);
+      check.setAttribute('aria-label', `Cocher ${t.name || t.id}`);
+      check.addEventListener('change', () => { check.checked ? state.selected.add(t.id) : state.selected.delete(t.id); updateSelectedCount(); });
+      box.appendChild(check);
+      row.appendChild(box);
 
       // The number can be typed straight in the list
       const numberCell = el('td');
@@ -386,8 +391,6 @@ const TrailAdmin = (function () {
     } else {
       select.value = '';
     }
-    select.disabled = !isSystemAdmin;
-    $('tr-sector-hint').hidden = isSystemAdmin;
   }
 
   function statusLine(trail) {
@@ -414,7 +417,7 @@ const TrailAdmin = (function () {
     $('tr-kind').value = kind;
     fillDifficulty(kind, trail ? TrailService.difficultyOf(trail) : '');
     fillSectorSelect(trail);
-    if (!trail && state.sectorFilter && state.sectorFilter !== NO_SECTOR && isSystemAdmin) $('tr-sector').value = state.sectorFilter;
+    if (!trail && state.sectorFilter && state.sectorFilter !== NO_SECTOR) $('tr-sector').value = state.sectorFilter;
     $('tr-length').value = trail && trail.length != null ? trail.length : '';
     $('tr-status').textContent = statusLine(trail);
     // Hide / restore only exist for a saved trail
@@ -507,7 +510,7 @@ const TrailAdmin = (function () {
           coordinates: state.position ? { left: state.position.left, top: state.position.top } : del,
           modifiedAt: stamp, modifiedBy: userId
         };
-        if (isSystemAdmin) update.sector = sector === '' ? del : sector; // only a system admin sets the sector
+        update.sector = sector === '' ? del : sector;
         await window.db.collection('trails').doc(editingId).update(update);
       } else {
         savedId = TrailService.nextId(kind, state.trails.map(t => t.id));
@@ -515,7 +518,7 @@ const TrailAdmin = (function () {
         if (number !== '') data.number = number;
         if (difficulty !== '') data.difficulty = difficulty;
         if (length !== null) data.length = length;
-        if (isSystemAdmin && sector !== '') data.sector = sector;
+        if (sector !== '') data.sector = sector;
         if (state.position) data.coordinates = { left: state.position.left, top: state.position.top };
         await window.db.collection('trails').doc(savedId).set(data);
       }
@@ -583,6 +586,49 @@ const TrailAdmin = (function () {
     } catch (error) {
       console.error('Error restoring the trail:', error);
       showMessage(`Impossible de restaurer le sentier : ${error.message || 'erreur inconnue'}`, 'error');
+    }
+  }
+
+  // ---- Shelters: hide / restore (never deleted: inspections point to them by id) ------------------------------------
+  function renderShelterPanel() {
+    const panel = $('shelter-panel');
+    if (!panel) return;
+    const config = APP_CONFIG.networks[state.network];
+    panel.hidden = !(config && config.features && config.features.shelters);
+    const body = $('shelter-rows');
+    body.replaceChildren();
+    state.shelters
+      .filter(s => Network.of(s) === state.network)
+      .sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id), 'fr'))
+      .forEach(shelter => {
+        const hidden = TrailService.isArchived(shelter);
+        const row = el('tr', hidden ? 'is-archived' : '');
+        row.dataset.id = shelter.id;
+        const action = el('td');
+        const button = el('button', 'btn btn-secondary btn-sm', hidden ? 'Restaurer' : 'Masquer');
+        button.type = 'button';
+        button.addEventListener('click', () => setShelterHidden(shelter, !hidden, button));
+        action.appendChild(button);
+        row.append(el('td', '', shelter.name || shelter.id), el('td', '', hidden ? 'Masqué' : 'Visible'), action);
+        body.appendChild(row);
+      });
+  }
+
+  async function setShelterHidden(shelter, hide, button) {
+    const name = shelter.name || shelter.id;
+    if (hide && !window.confirm(`Masquer l'abri « ${name} » ?\n\nIl disparaîtra de la carte et du formulaire de rapport d'abri. Son historique d'inspections est conservé, et vous pourrez le restaurer.`)) return;
+    setButtonLoading(button, true, '...');
+    try {
+      const del = firebase.firestore.FieldValue.delete();
+      await window.db.collection('shelters').doc(shelter.id).update(hide
+        ? { archived: true, archivedAt: firebase.firestore.FieldValue.serverTimestamp(), archivedBy: userId }
+        : { archived: del, archivedAt: del, archivedBy: del });
+      showMessage(`Abri « ${name} » ${hide ? 'masqué' : 'restauré'}.`, 'success');
+      await load();
+    } catch (error) {
+      console.error('Error hiding the shelter:', error);
+      showMessage(`Impossible de modifier l'abri : ${error.message || 'erreur inconnue'}`, 'error');
+      setButtonLoading(button, false);
     }
   }
 
@@ -688,15 +734,10 @@ const TrailAdmin = (function () {
   }
 
   /**
-   * @param networkIds the activities the current admin manages
-   * @param options    { isSystemAdmin }: sectors and sector assignment are system admin only
+   * @param networkIds the activities offered (the system admin's)
    */
-  async function init(uid, networkIds, options) {
+  async function init(uid, networkIds) {
     userId = uid;
-    isSystemAdmin = !!(options && options.isSystemAdmin);
-
-    // System admin only: sector column of the editor, bulk bar, sector panel
-    ['trail-bulk', 'sector-panel', 'trail-th-select'].forEach(id => { $(id).hidden = !isSystemAdmin; });
 
     $('trail-network').innerHTML = networkIds.map(id => `<option value="${id}">${APP_CONFIG.networks[id].icon} ${APP_CONFIG.networks[id].name}</option>`).join('');
     $('trail-network').addEventListener('change', event => selectNetwork(event.target.value));
@@ -720,7 +761,11 @@ const TrailAdmin = (function () {
     $('sector-new-add').addEventListener('click', addSector);
 
     await loadSectors();
-    selectNetwork(networkIds[0]);
+    // Start on the activity chosen in the portal when this admin manages it, else their first one
+    const portalNetwork = (window.Network && Network.current && Network.current()) || null;
+    const first = networkIds.includes(portalNetwork) ? portalNetwork : networkIds[0];
+    $('trail-network').value = first;
+    selectNetwork(first);
     load();
   }
 
