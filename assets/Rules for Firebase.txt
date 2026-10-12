@@ -1,0 +1,449 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is admin or system_admin
+    function isAdmin() {
+      return request.auth != null && 
+             get(/databases/$(database)/documents/inspectors/$(request.auth.uid)).data.role in ['admin', 'system_admin'];
+    }
+    
+    function isSystemAdmin() {
+      return request.auth != null && 
+             get(/databases/$(database)/documents/inspectors/$(request.auth.uid)).data.role == 'system_admin';
+    }
+    
+    // Activities (networks) a user works in: inspectors/{uid}.networks.
+    // Every user document has the field; without it these rules deny (fail closed).
+    function networksOf(uid) {
+      return get(/databases/$(database)/documents/inspectors/$(uid)).data.networks;
+    }
+
+    // Activities added to or removed from a user document by the current write
+    function changedNetworks() {
+      return resource.data.networks.toSet()
+               .difference(request.resource.data.networks.toSet())
+             .union(request.resource.data.networks.toSet()
+               .difference(resource.data.networks.toSet()));
+    }
+
+    // A system_admin can edit any user. An admin can edit users who share one of
+    // their activities (never a system_admin), and can only add or remove
+    // activities they hold themselves. Every user keeps at least one activity.
+    function adminMayUpdateUser() {
+      return isSystemAdmin() ||
+             (isAdmin() &&
+              resource.data.role != 'system_admin' &&
+              request.resource.data.role != 'system_admin' &&
+              request.resource.data.networks.size() > 0 &&
+              resource.data.networks.toSet()
+                .intersection(networksOf(request.auth.uid).toSet()).size() > 0 &&
+              changedNetworks().difference(networksOf(request.auth.uid).toSet()).size() == 0);
+    }
+
+    // ACTIVITY-SCOPED DATA (trails, shelters, inspections, infractions, signalisations).
+    // Each record has a `network` field. Writes need the user to belong to the record's
+    // activity, and a record's activity never changes. Reads are not restricted by activity:
+    // the pages filter what they show (restricting reads would need every query to filter by
+    // network, plus indexes).
+    function recordNetwork(data) {
+      return data.network;
+    }
+
+    // May the signed-in user work in this activity? (a system_admin can in every one)
+    function canWorkIn(network) {
+      return request.auth != null &&
+             (isSystemAdmin() || network in networksOf(request.auth.uid));
+    }
+
+    // The write leaves the record's activity as it was
+    function sameNetwork() {
+      return recordNetwork(request.resource.data) == recordNetwork(resource.data);
+    }
+
+    // PUBLIC ACCESS - for the public status page: only trails (and shelters), weather_public, volunteerLimits and the volunteers sign-up (see below).
+    // The inspection records and the photos need a login.
+    // Trails: an inspector's inspection only changes the status fields; everything else
+    // (name, number, kind, difficulty, length, position) is edited by admins (Administration > Sentiers).
+    // The `sector` of a trail (the area the infraction and signalisation forms group it under)
+    // is set by a system_admin only.
+    function sectorUnchanged() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['sector']);
+    }
+
+    match /trails/{document} {
+      allow read: if true;
+      allow update: if canWorkIn(recordNetwork(resource.data)) && sameNetwork() &&
+                       ((isAdmin() && (isSystemAdmin() || sectorUnchanged())) ||
+                        request.resource.data.diff(resource.data).affectedKeys()
+                          .hasOnly(['status', 'lastUpdated', 'lastInspectionId']));
+      allow create: if isAdmin() && canWorkIn(recordNetwork(request.resource.data)) &&
+                       (isSystemAdmin() || !('sector' in request.resource.data));
+      // Never deleted from the app: a trail that is gone is hidden (archived: true), its history stays
+      allow delete: if false;
+    }
+
+    match /shelters/{document} {
+      allow read: if true;
+      // Admins only (hide / restore: archived). Inspectors never change a shelter.
+      allow update: if isAdmin() && canWorkIn(recordNetwork(resource.data)) && sameNetwork();
+      allow create: if isAdmin() && canWorkIn(recordNetwork(request.resource.data));
+      // Never deleted from the app: a shelter that is gone is hidden (archived: true), its history stays
+      allow delete: if false;
+    }
+
+    match /inspections/{document} {
+      allow read: if request.auth != null;   // signed-in only (names, notes and photo links are not public)
+      allow create: if canWorkIn(recordNetwork(request.resource.data));
+      allow update: if canWorkIn(recordNetwork(resource.data)) && sameNetwork();
+      // Deleting a record is reserved to the system admin (admins archive / correct instead)
+      allow delete: if isSystemAdmin();
+    }
+
+    match /trail_inspections/{document} {
+      allow read: if request.auth != null;   // signed-in only (names, notes and photo links are not public)
+      allow create: if canWorkIn(recordNetwork(request.resource.data));
+      // Only the inspector who made it, or an admin (e.g. to correct a photo's position)
+      allow update: if request.auth != null &&
+          (request.auth.uid == resource.data.inspector_id || isAdmin()) &&
+          canWorkIn(recordNetwork(resource.data)) && sameNetwork();
+      // Deleting a record is reserved to the system admin (admins archive / correct instead)
+      allow delete: if isSystemAdmin();
+    }
+
+    match /shelter_inspections/{document} {
+      allow read: if request.auth != null;   // signed-in only (names, notes and photo links are not public)
+      allow create: if canWorkIn(recordNetwork(request.resource.data));
+      // Only the inspector who made it, or an admin (e.g. to correct a photo's position)
+      allow update: if request.auth != null &&
+          (request.auth.uid == resource.data.inspector_id || isAdmin()) &&
+          canWorkIn(recordNetwork(resource.data)) && sameNetwork();
+      // Deleting a record is reserved to the system admin (admins archive / correct instead)
+      allow delete: if isSystemAdmin();
+    }
+    
+    // PROTECTED ACCESS
+    match /inspectors/{userId} {
+      allow read: if request.auth != null;
+
+      // Only admins create accounts. Only a system_admin can grant system_admin or
+      // any activity; an admin can only give activities they hold, and at least one.
+      allow create: if isAdmin() &&
+                    (request.resource.data.role != 'system_admin' || isSystemAdmin()) &&
+                    (isSystemAdmin() ||
+                     (request.resource.data.networks.size() > 0 &&
+                      request.resource.data.networks.toSet()
+                        .difference(networksOf(request.auth.uid).toSet()).size() == 0));
+
+      // Admin edits: see adminMayUpdateUser().
+      // Users can only edit their own non-privileged fields (see user-profile.html, theme.js).
+      allow update: if adminMayUpdateUser() ||
+                       (request.auth != null && request.auth.uid == userId &&
+                        request.resource.data.diff(resource.data).affectedKeys()
+                          .hasOnly(['phone', 'preferences']));
+
+      allow delete: if isSystemAdmin();
+    }
+    
+    // SECTORS: the areas the infraction and signalisation forms group trails under
+    // (a trail's `sector` field holds a sector id). Only a system_admin manages sectors.
+    // Sectors are never deleted from the app (records refer to their id).
+    match /sectors/{sectorId} {
+      allow read: if request.auth != null;
+      allow create: if isSystemAdmin();
+      allow update: if isSystemAdmin() &&
+                    request.resource.data.network == resource.data.network;
+      allow delete: if isSystemAdmin();
+    }
+
+    // MAPS: the GPS calibration of each activity's map (maps/{network}: mode, points, width,
+    // height). Everyone signed in reads it (photo positions on the maps); only a system_admin
+    // writes it (Administration > Cartes).
+    match /maps/{network} {
+      allow read: if request.auth != null;
+      allow write: if isSystemAdmin();
+    }
+
+    match /config/{document} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+    
+    match /locations/{document} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+    
+    // INFRACTIONS
+    match /infractions/{infractionId} {
+      allow read: if request.auth != null;
+      allow create: if canWorkIn(recordNetwork(request.resource.data));
+      allow update: if request.auth != null &&
+          (request.auth.uid == resource.data.patrolId || isAdmin()) &&
+          canWorkIn(recordNetwork(resource.data)) && sameNetwork();
+      // Deleting a record is reserved to the system admin (admins archive / correct instead)
+      allow delete: if isSystemAdmin();
+    }
+    
+    // SIGNALISATIONS
+    match /signalisations/{signalisationId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null &&
+          get(/databases/$(database)/documents/inspectors/$(request.auth.uid)).data.allowSignalisation == true &&
+          canWorkIn(recordNetwork(request.resource.data));
+      allow update: if request.auth != null &&
+          (request.auth.uid == resource.data.inspectorId || isAdmin()) &&
+          canWorkIn(recordNetwork(resource.data)) && sameNetwork();
+      // Deleting a record is reserved to the system admin (admins archive / correct instead)
+      allow delete: if isSystemAdmin();
+    }
+    
+    // MAINTENANCE LOGS: a trail builder's own daily work log (bike network). One doc per
+    // builder per day, editable by its owner throughout the day, same shape as infractions/
+    // signalisations. builderId must be the writer's own uid (this is explicitly "my log",
+    // unlike infractions/signalisations which don't enforce who patrolId/inspectorId names).
+    match /maintenance_logs/{logId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null &&
+          get(/databases/$(database)/documents/inspectors/$(request.auth.uid)).data.allowMaintenance == true &&
+          canWorkIn(recordNetwork(request.resource.data)) &&
+          request.resource.data.builderId == request.auth.uid;
+      allow update: if request.auth != null &&
+          (request.auth.uid == resource.data.builderId || isAdmin()) &&
+          canWorkIn(recordNetwork(resource.data)) && sameNetwork();
+      // Deleting a record is reserved to the system admin (admins archive / correct instead)
+      allow delete: if isSystemAdmin();
+    }
+
+    // VOLUNTEERS: self-registration from the standalone QR page (maintenance-volunteer-register.html).
+    // No login there, so this is the app's only public write - deliberately narrow: create-only,
+    // closed field set, typed/bounded, agreement must be accepted, createdAt must be the server
+    // clock (blocks a scripted client from backdating/spoofing). Read is limited to signed-in
+    // users so the maintenance log's volunteer picker can list names. An admin can delete a
+    // registration (Administration > Bénévoles) once it is no longer needed for the season;
+    // maintenance_logs store the volunteer's name directly (volunteerNames), not a reference to
+    // this collection, so deleting one here never affects a past log. Nobody can update one.
+    // A registration also has to be COUNTED: the same write batch must have moved the sign-up
+    // counters (volunteerLimits/state, below) by +1 and named this volunteer in lastVolunteerId.
+    match /volunteers/{volunteerId} {
+      allow read: if request.auth != null;
+      allow update: if false;
+      allow delete: if isAdmin() && canWorkIn(recordNetwork(resource.data));
+      allow create: if
+          request.resource.data.keys().hasOnly(['nom', 'prenom', 'network', 'agreementAccepted', 'createdAt']) &&
+          request.resource.data.keys().hasAll(['nom', 'prenom', 'network', 'agreementAccepted', 'createdAt']) &&
+          request.resource.data.nom is string && request.resource.data.nom.size() > 0 && request.resource.data.nom.size() <= 100 &&
+          request.resource.data.prenom is string && request.resource.data.prenom.size() > 0 && request.resource.data.prenom.size() <= 100 &&
+          request.resource.data.network == 'bike' &&
+          request.resource.data.agreementAccepted == true &&
+          request.resource.data.createdAt == request.time &&
+          getAfter(/databases/$(database)/documents/volunteerLimits/state).data.lastVolunteerId == volunteerId;
+    }
+
+    // VOLUNTEER SIGN-UP LIMITS: the public registration page has no login, so the number of
+    // registrations is limited here, for all visitors together: per minute, per hour, per day and
+    // in total (js/services/volunteer-limits.js is the client side of this contract).
+    //   volunteerLimits/config  the limits and the on/off switch. Written by an admin (Administration >
+    //                           Bénévoles); while it is missing the defaults below apply (10 / 60 / 150 / 500).
+    //   volunteerLimits/state   the counters. Anyone may move them, but only by exactly +1 and only in
+    //                           the same write batch that creates the matching volunteer (existsAfter below),
+    //                           so they cannot be inflated alone. A window (minute / hour / day) starts at its
+    //                           first registration (start = server time, count 1) and counts +1 until it ends.
+    //                           An admin can write anything (reset to zero).
+    // Reading is public (the page reads the counters to build the next ones and to explain a refusal).
+    function volCfg() {
+      return exists(/databases/$(database)/documents/volunteerLimits/config)
+        ? get(/databases/$(database)/documents/volunteerLimits/config).data
+        : {};
+    }
+
+    // One window: still running -> same start, count + 1; ended (or never started) -> start = now, count 1.
+    function volWindowOk(o, n, start, count, secs, limit) {
+      let oStart = o.get(start, timestamp.date(2000, 1, 1));
+      let oCount = o.get(count, 0);
+      return n[count] <= limit &&
+             (request.time < oStart + duration.value(secs, 's')
+               ? (n[start] == oStart && n[count] == oCount + 1)
+               : (n[start] == request.time && n[count] == 1));
+    }
+
+    function volStateOk(c) {
+      let n = request.resource.data;
+      let o = resource == null ? {} : resource.data;
+      return c.get('enabled', true) == true &&
+             n.keys().hasOnly(['total', 'minuteStart', 'minuteCount', 'hourStart', 'hourCount', 'dayStart', 'dayCount', 'lastVolunteerId', 'updatedAt']) &&
+             n.keys().hasAll(['total', 'minuteStart', 'minuteCount', 'hourStart', 'hourCount', 'dayStart', 'dayCount', 'lastVolunteerId', 'updatedAt']) &&
+             n.updatedAt == request.time &&
+             n.total == o.get('total', 0) + 1 && n.total <= c.get('total', 500) &&
+             volWindowOk(o, n, 'minuteStart', 'minuteCount', 60, c.get('perMinute', 10)) &&
+             volWindowOk(o, n, 'hourStart', 'hourCount', 3600, c.get('perHour', 60)) &&
+             volWindowOk(o, n, 'dayStart', 'dayCount', 86400, c.get('perDay', 150)) &&
+             n.lastVolunteerId is string &&
+             existsAfter(/databases/$(database)/documents/volunteers/$(n.lastVolunteerId)) &&
+             !exists(/databases/$(database)/documents/volunteers/$(n.lastVolunteerId));
+    }
+
+    match /volunteerLimits/{docId} {
+      allow read: if true;
+      allow create, update: if docId == 'state' && volStateOk(volCfg());
+      allow write: if isAdmin() && canWorkIn('bike');
+    }
+
+    // METEO (weather): readings entered by the people allowed to (inspectors/{uid}.allowMeteo) and by admins.
+    // Same in both seasons, so no activity check. A record is written by the person who creates it
+    // (createdBy = their uid); any user with the permission, and any admin, can correct any record;
+    // only the system admin deletes. Signed-in read (the records carry the author's name).
+    function allowsMeteo() {
+      return request.auth != null &&
+             get(/databases/$(database)/documents/inspectors/$(request.auth.uid)).data.get('allowMeteo', false) == true;
+    }
+
+    match /weather_records/{recordId} {
+      allow read: if request.auth != null;
+      allow create: if allowsMeteo() && request.resource.data.createdBy == request.auth.uid;
+      allow update: if (allowsMeteo() || isAdmin()) && request.resource.data.createdBy == resource.data.createdBy;
+      allow delete: if isSystemAdmin();
+    }
+
+    // The PUBLIC copy of the latest reading (no names), read by the public status page and by the Mont Orford
+    // website. Written by the app each time a reading is saved, corrected or deleted (js/services/weather-service.js
+    // publishLatest). Fixed shape: only these fields, and `measures` holds only the known measures - nothing else
+    // (a name, a comment) can be put there. Only the 'latest' document exists.
+    match /weather_public/{docId} {
+      allow read: if true;
+      allow create, update: if docId == 'latest' && (allowsMeteo() || isAdmin()) &&
+          request.resource.data.keys().hasOnly(['locationId', 'locationName', 'recordedAt', 'measures', 'webFields', 'attribution', 'updatedAt']) &&
+          request.resource.data.keys().hasAll(['locationId', 'recordedAt', 'measures', 'updatedAt']) &&
+          request.resource.data.measures is map &&
+          request.resource.data.measures.keys().hasOnly(['tempC', 'feelsLikeC', 'windForce', 'windKmh', 'windDir', 'gustKmh', 'rainMm', 'newSnowCm', 'snowType', 'snowDepthCm', 'snowBase', 'snowCover', 'cloudCover', 'sky', 'visibilityKm', 'humidityPct', 'pressureKpa']) &&
+          request.resource.data.updatedAt == request.time;
+      allow delete: if docId == 'latest' && (allowsMeteo() || isAdmin());
+    }
+    // Admin settings of the weather (for example: show the weather when looking at a report)
+    match /weather_settings/{docId} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+    // REQUESTS
+    match /requests/{requestId} {
+      allow read: if request.auth != null && 
+          (resource.data.createdBy == request.auth.uid || isAdmin());
+      allow create: if request.auth != null;
+      allow update: if request.auth != null && 
+          (resource.data.createdBy == request.auth.uid || isAdmin());
+      allow delete: if isSystemAdmin();
+      
+      match /comments/{commentId} {
+        allow read: if request.auth != null;
+        allow create: if request.auth != null;
+        allow update, delete: if false;
+      }
+    }
+    
+    // SUPPORT E-MAILS
+    // The Cloud Function sendMail (functions/index.js) reads the collection "mail" and sends each message.
+    // A signed-in user may only queue ONE short plain-text message, addressed to the creator of the request or to
+    // the admin chosen in support_settings/config - never to another address. Nobody can read, change or delete it.
+    function mailRecipientOk(requestId, address) {
+      return address == get(/databases/$(database)/documents/inspectors/$(get(/databases/$(database)/documents/requests/$(requestId)).data.createdBy)).data.email
+          || address == get(/databases/$(database)/documents/inspectors/$(get(/databases/$(database)/documents/support_settings/config).data.adminUid)).data.email;
+    }
+    match /mail/{mailId} {
+      allow create: if request.auth != null &&
+          request.resource.data.keys().hasOnly(['to', 'message', 'requestId', 'kind', 'createdBy', 'createdAt']) &&
+          request.resource.data.keys().hasAll(['to', 'message', 'requestId', 'kind', 'createdBy', 'createdAt']) &&
+          request.resource.data.to is list && request.resource.data.to.size() == 1 &&
+          request.resource.data.to[0] is string &&
+          request.resource.data.message is map &&
+          request.resource.data.message.keys().hasOnly(['subject', 'text']) &&
+          request.resource.data.message.keys().hasAll(['subject', 'text']) &&
+          request.resource.data.message.subject is string &&
+          request.resource.data.message.subject.size() > 0 && request.resource.data.message.subject.size() <= 200 &&
+          request.resource.data.message.text is string &&
+          request.resource.data.message.text.size() > 0 && request.resource.data.message.text.size() <= 3000 &&
+          request.resource.data.kind in ['created_admin', 'created_creator', 'status', 'comment'] &&
+          request.resource.data.requestId is string &&
+          request.resource.data.createdBy == request.auth.uid &&
+          request.resource.data.createdAt == request.time &&
+          mailRecipientOk(request.resource.data.requestId, request.resource.data.to[0]);
+      allow read, update, delete: if false;
+    }
+
+    // Settings of those e-mails (on / off, the admin who receives the new requests): the system admin writes them
+    match /support_settings/{docId} {
+      allow read: if request.auth != null;
+      allow write: if isSystemAdmin();
+    }
+
+    // PUBLIC STATUS FILE: the settings of the Cloud Function "publishStatus", which rewrites public/status.json (Cloud Storage)
+    // on the schedule set here (Administration > Statut public). Only the system admin reads and changes the settings, and only
+    // these fields (the function itself writes the report of its last run with the admin SDK, which ignores these rules).
+    function publishSettingsOk(d) {
+      return (!('enabled' in d) || d.enabled is bool) &&
+             (!('dayFrom' in d) || (d.dayFrom is string && d.dayFrom.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$'))) &&
+             (!('dayTo' in d) || (d.dayTo is string && d.dayTo.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$'))) &&
+             (!('dayEveryMinutes' in d) || (d.dayEveryMinutes is int && d.dayEveryMinutes >= 1 && d.dayEveryMinutes <= 60)) &&
+             (!('nightEveryMinutes' in d) || (d.nightEveryMinutes is int && d.nightEveryMinutes >= 1 && d.nightEveryMinutes <= 60));
+    }
+    match /public_status/{docId} {
+      allow read: if docId == 'config' && isSystemAdmin();
+      allow create: if docId == 'config' && isSystemAdmin() &&
+          request.resource.data.keys().hasOnly(['enabled', 'dayFrom', 'dayTo', 'dayEveryMinutes', 'nightEveryMinutes', 'refreshRequestedAt', 'updatedAt', 'updatedBy']) &&
+          publishSettingsOk(request.resource.data);
+      allow update: if docId == 'config' && isSystemAdmin() &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['enabled', 'dayFrom', 'dayTo', 'dayEveryMinutes', 'nightEveryMinutes', 'refreshRequestedAt', 'updatedAt', 'updatedBy']) &&
+          publishSettingsOk(request.resource.data);
+      allow delete: if false;
+    }    
+  }
+}
+
+// ===== CLOUD STORAGE RULES =====
+// Paste THIS PART (from the next line) into Firebase console > Storage > Rules, including the
+// rules_version line: listing files (the orphan clean-up in the Admin pages) only works with version 2.
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      // Signed-in only: nobody can list or download by name without an account. Photos already saved keep showing in the
+      // app because their address (getDownloadURL) carries a secret token that works whatever these rules say.
+      allow read: if request.auth != null;
+
+      // Images only, max 15 MB
+      allow create, update: if request.auth != null &&
+                            request.resource.size < 15 * 1024 * 1024 &&
+                            request.resource.contentType.matches('image/.*');
+
+      // System admin only: matches record deletion (inspection-history, inspection-admin orphan cleaner)
+      allow delete: if request.auth != null &&
+                    firestore.get(/databases/(default)/documents/inspectors/$(request.auth.uid)).data.role == 'system_admin';
+    }
+
+    // The ONE public file: public/status.json (trail status and latest weather), rewritten every minute or so by the Cloud Function
+    // "publishStatus" (admin SDK, which ignores these rules). Nobody can write it from a browser. Reading it costs no Firestore reads.
+    match /public/{file} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // The administrators' guide (a PDF uploaded by hand in the console, folder admin-docs/): only administrators and system admins read it,
+    // and nobody writes it from the app (the console and the admin SDK ignore these rules).
+    match /admin-docs/{file} {
+      allow read: if request.auth != null &&
+                  firestore.get(/databases/(default)/documents/inspectors/$(request.auth.uid)).data.role in ['admin', 'system_admin'];
+      allow write: if false;
+    }
+
+    // Inspectors can delete files in their own folder: removing a photo while
+    // editing an infraction / signalisation report (PhotoService.deleteRemoved)
+    match /infractions/{userId}/{file=**} {
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+    match /signalisations/{userId}/{file=**} {
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+    match /maintenance/{userId}/{file=**} {
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+  }
+}
