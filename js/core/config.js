@@ -164,6 +164,7 @@ const APP_CONFIG = {
       trailKinds: ['uphill', 'downhill', 'lift'],
       reportMaps: ['ski-downhill-geo', 'ski-geo'],
       inspectionKinds: ['uphill', 'downhill'],
+      staleKinds: ['uphill'],   // the "À inspecter" list (dashboard) is on for these kinds; add 'downhill' to turn it on there (js/services/inspection-gaps.js)
       features: { shelters: true, snowCondition: true, weather: true },
       publicTitle: 'État des sentiers de randonnée alpine',
       infractions: {
@@ -187,6 +188,7 @@ const APP_CONFIG = {
       trailKinds: ['bike'],
       reportMaps: ['bike-geo'],
       inspectionKinds: ['bike'],
+      staleKinds: ['bike'],
       features: { shelters: false, snowCondition: false, weather: false },   // weather: the Météo app, its public panel and the weather in reports are for the ski season only, for now (true brings them back)
       publicTitle: 'État des sentiers de vélo de montagne',
       infractions: {
@@ -200,6 +202,15 @@ const APP_CONFIG = {
     }
   },
   defaultNetworks: ['ski'],
+
+  // ===== TÂCHES (JOBS) =====
+  // "Créer un job" in the details of a report (js/services/job-from-report.js). One switch per kind of report: false hides the button AND the
+  // list of the tasks created from it, for everybody. Even when true, only an administrator or a user with the Jobs permission sees it.
+  jobs: {
+    createFrom: { inspections: true, signalisations: true },
+    // In the Entretien report: the open tasks of the place and the link of a travail to a task (false = none of it, the report works as before)
+    entretien: true
+  },
 
   // The earliest season the admin Statistiques tab's season navigator can go back to, for every
   // activity (winter 2025-2026: when the app went live - nothing meaningful exists before it).
@@ -330,6 +341,13 @@ const APP_CONFIG = {
       items: [
         { id: 'regis-manage', label: 'Tableau de bord', icon: '🏔️', href: 'pages/regis-manage.html' },
         { id: 'regis-log', label: 'Gestion', icon: '📋', href: 'pages/regis-log.html' }   // the status log, read only
+      ]
+    },
+    jobs: {
+      title: 'Jobs',
+      items: [
+        { id: 'jobs', label: 'Liste', icon: '🛠️', href: 'pages/jobs.html' },
+        { id: 'jobs-admin', label: 'Admin', icon: '⚙️', href: 'pages/jobs-admin.html', admin: true }
       ]
     },
     support: {

@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Portail de gestion de la patrouille Mont Orford">
   <meta name="theme-color" content="#1b4b72">
+  <!-- Home-screen install (assets/manifest.json, icons from tools/make-app-icons.ps1) -->
+  <link rel="manifest" href="assets/manifest.json">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Regis">
   <title>Portail</title>
   
   <!-- Favicon -->
@@ -57,6 +63,7 @@
   <script src="js/core/ui.js"></script>
   <script src="js/core/firebase-loader.js"></script>
   <script src="js/core/auth.js"></script>
+  <script src="js/services/badges.js"></script>
 
   <!-- Page JS -->
   <script>
@@ -73,11 +80,23 @@
         actionText: 'Accéder à l\'application'
       },
       {
+        id: 'jobs',
+        title: 'Jobs',
+        icon: '🛠️',
+        description: 'Les travaux à faire sur les sentiers : créer un job, suivre son état et sa priorité.',
+        url: 'pages/jobs.html',
+        permission: 'allowJobs',
+        permissionDefault: false,
+        adminsAlways: true,   // every administrator manages the tasks, whatever their flags
+        actionText: 'Accéder à l\'application'
+      },
+      {
         id: 'inspection',
         title: 'Inspections',
         icon: '🔍',
         description: 'Gestion des inspections et status des pistes, sentiers et abris.',
         url: 'pages/inspection-dashboard.html',
+        mobileUrl: 'pages/inspection-dashboard.html?go=a-inspecter',   // on a phone: straight to the "À inspecter" list (the report of a trail is one tap away)
         permission: 'allowInspection',
         permissionDefault: false,
         actionText: 'Accéder à l\'application'
@@ -165,8 +184,9 @@
      * responsive CSS (max-width: 768px).
      */
     function landingUrl(app, isAdmin) {
-      if (!app.desktopUrl) return app.url;
       const isMobile = window.matchMedia('(max-width: 768px)').matches;
+      if (isMobile && app.mobileUrl) return app.mobileUrl;   // e.g. Inspections: the dashboard already scrolled to "À inspecter"
+      if (!app.desktopUrl) return app.url;
       if (isMobile) return app.url;
       if (app.desktopUrlRequiresAdmin && !isAdmin) return app.url;
       return app.desktopUrl;
@@ -201,6 +221,8 @@
           }
         }
 
+        if (app.adminsAlways && isAdmin) hasAccess = true;
+
         // Some apps only apply to one network (e.g. Entretien is bike-only)
         if (app.network && Network.current() !== app.network) hasAccess = false;
         if (app.feature && !Network.feature(app.feature)) hasAccess = false;
@@ -233,6 +255,32 @@
         appGrid.appendChild(card);
       });
       addRegisBadge(userData);
+      addInspectionMedal(userData);
+    }
+
+    /**
+     * On the Inspections tile: the medal of the season (js/services/badges.js). The inspector's own inspections of the season are counted
+     * (kept 10 minutes in the session), the level is 5 / 10 / 20 / 50 / 100 and it starts again with each season. Before the first level
+     * the tile shows the progress ("3/5"), so the goal is visible. If the count fails (index not created yet) nothing is shown.
+     */
+    async function addInspectionMedal(userData) {
+      const card = document.querySelector('.app-card--inspection');
+      if (!card || userData.allowInspection !== true || typeof Badges === 'undefined') return;
+      const user = window.currentUser || (typeof currentUser !== 'undefined' ? currentUser : null);
+      const summary = await Badges.summary(db, user && user.uid, Network.current());
+      const current = document.querySelector('.app-card--inspection');   // the cards may have been drawn again meanwhile
+      if (!current) return;
+      const old = current.querySelector('.app-card__medal');
+      if (old) old.remove();
+      if (!summary) return;
+      const medal = document.createElement('span');
+      medal.className = 'app-card__medal' + (summary.level ? ' app-card__medal--' + summary.level.id : ' app-card__medal--none');
+      medal.title = Badges.describe(summary);
+      medal.setAttribute('aria-label', medal.title);
+      // The medal and the number reached; before the first level a star and the goal ("/5"), which the phone layout drops to keep the tile small
+      const goal = summary.level ? '' : `<span class="app-card__medal-goal">/${summary.next.at}</span>`;
+      medal.innerHTML = `<span>${summary.level ? summary.level.icon : '☆'}</span><span>${summary.count}</span>${goal}`;
+      current.querySelector('.app-card__header').appendChild(medal);
     }
 
     /**

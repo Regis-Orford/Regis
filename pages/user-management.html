@@ -67,6 +67,11 @@
       border-color: #0f766e;
     }
 
+    .access-badge--clickable.is-active.access-badge--jobs {
+      background: rgba(124, 58, 237, 0.15);
+      border-color: #7c3aed;
+    }
+
     .access-badge--clickable.is-active.access-badge--meteo {
       background: rgba(202, 138, 4, 0.15);
       border-color: #ca8a04;
@@ -377,6 +382,9 @@
       <button class="admin-tabs__btn" data-tab="station" id="station-tab-btn" onclick="switchTab('station')" style="display: none;">
         🌦️ Station météo
       </button>
+      <button class="admin-tabs__btn" data-tab="summary" id="summary-tab-btn" onclick="switchTab('summary')">
+        📄 Bilan de saison
+      </button>
       <button class="admin-tabs__btn" data-tab="links" onclick="switchTab('links')">
         💡 Liens et astuces
       </button>
@@ -438,6 +446,7 @@
               <option value="allowMaintenance">🪏 Entretien</option>
               <option value="allowMeteo">🌦️ Météo</option>
                     <option value="allowRegis">🏔️ Régis gère</option>
+                    <option value="allowJobs">🛠️ Jobs</option>
             </select>
             <div class="page-size-select">
               <label for="users-page-size">Afficher:</label>
@@ -501,7 +510,7 @@
           <strong>role</strong> (<code>inspector</code> par défaut, ou <code>admin</code>),
           <strong>phone</strong>,
           <strong>allowInspection</strong> (vrai par défaut),
-          <strong>allowInfraction</strong>, <strong>allowSignalisation</strong>, <strong>allowMaintenance</strong>, <strong>allowMeteo</strong>, <strong>allowRegis</strong> (faux par défaut ; valeurs <code>true</code> ou <code>false</code>),
+          <strong>allowInfraction</strong>, <strong>allowSignalisation</strong>, <strong>allowMaintenance</strong>, <strong>allowMeteo</strong>, <strong>allowRegis</strong>, <strong>allowJobs</strong> (faux par défaut ; valeurs <code>true</code> ou <code>false</code>),
           <strong>networks</strong> : activités séparées par « | », par exemple <code>ski|bike</code> (sans cette colonne, l'utilisateur reçoit l'activité par défaut : ski).
           Les utilisateurs importés sont créés actifs.
         </p>
@@ -967,6 +976,13 @@
             </div>
           </label>
           <label class="export-option">
+            <input type="checkbox" id="export-jobs" checked>
+            <div class="export-option-label">
+              <span class="export-option-name">🛠️ Jobs</span>
+              <span class="export-option-desc">jobs (CSV : une ligne par job; créés depuis la date de début, plus tous les jobs encore ouverts)</span>
+            </div>
+          </label>
+          <label class="export-option">
             <input type="checkbox" id="export-meteo" checked>
             <div class="export-option-label">
               <span class="export-option-name">🌦️ Météo</span>
@@ -1098,6 +1114,10 @@
         <p class="data-export-section__description" id="station-tab-placeholder">Contenu à venir plus tard.</p>
       </div>
     </div>
+    <!-- TAB: SEASON SUMMARY (js/admin/season-summary-view.js; administrators and system administrators) -->
+    <div class="admin-tab-content" id="summary-tab">
+      <div id="summary-root"></div>
+    </div>
     <!-- TAB: LINKS AND TIPS -->
     <div class="admin-tab-content" id="links-tab">
       <div class="data-export-section links-card">
@@ -1220,6 +1240,10 @@
               <input type="checkbox" class="form-check-input" id="access-regis">
               <label class="form-check-label" for="access-regis">🏔️ Régis gère</label>
             </div>
+            <div class="form-check">
+              <input type="checkbox" class="form-check-input" id="access-jobs">
+              <label class="form-check-label" for="access-jobs">🛠️ Jobs</label>
+            </div>
           </div>
 
           <div class="form-group" id="password-group" style="display: none;">
@@ -1261,6 +1285,9 @@
   <script src="../js/admin/map-calibration.js"></script>
   <script src="../js/services/trail-service.js"></script>
   <script src="../js/admin/trail-admin.js"></script>
+  <script src="../js/services/jobs.js"></script>
+  <script src="../js/services/season-summary.js"></script>
+  <script src="../js/admin/season-summary-view.js"></script>
   <script src="../js/services/status-snapshot.js"></script>
   <script src="../js/admin/public-status-admin.js"></script>
   <!-- QR code drawing for the "Liens et astuces" tab (qrcode-generator 1.4.4, MIT, bundled) -->
@@ -1660,6 +1687,7 @@
               ${appBadge(user, manageable, 'allowMaintenance', 'maintenance', '🪏', 'Entretien')}
               ${appBadge(user, manageable, 'allowMeteo', 'meteo', '🌦️', 'Météo')}
           ${appBadge(user, manageable, 'allowRegis', 'regis', '🏔️', 'Régis gère')}
+              ${appBadge(user, manageable, 'allowJobs', 'jobs', '🛠️', 'Jobs')}
             </div>
           </td>
           <td data-label="Statut">
@@ -1786,7 +1814,7 @@
         filterAndRenderUsers(true);
         
         const user = users.find(u => u.id === userId);
-        const fieldNames = { allowInspection: 'Inspection', allowInfraction: 'Infraction', allowSignalisation: 'Signalisation', allowMaintenance: 'Entretien', allowMeteo: 'Météo', allowRegis: 'Régis gère' };
+        const fieldNames = { allowInspection: 'Inspection', allowInfraction: 'Infraction', allowSignalisation: 'Signalisation', allowMaintenance: 'Entretien', allowMeteo: 'Météo', allowRegis: 'Régis gère', allowJobs: 'Jobs' };
         showMessage(`${fieldNames[field]} ${newValue ? 'activé' : 'désactivé'} pour ${user?.name || 'utilisateur'}.`, 'success');
       } catch (error) {
         console.error('Error toggling access:', error);
@@ -1876,6 +1904,7 @@
       document.getElementById('access-maintenance').checked = user.allowMaintenance === true;
       document.getElementById('access-meteo').checked = user.allowMeteo === true;
       document.getElementById('access-regis').checked = user.allowRegis === true;
+      document.getElementById('access-jobs').checked = user.allowJobs === true;
       
       document.getElementById('password-group').style.display = 'none';
       document.getElementById('user-password').required = false;
@@ -1932,7 +1961,8 @@
         allowSignalisation: document.getElementById('access-signalisation').checked,
         allowMaintenance: document.getElementById('access-maintenance').checked,
         allowMeteo: document.getElementById('access-meteo').checked,
-        allowRegis: document.getElementById('access-regis').checked
+        allowRegis: document.getElementById('access-regis').checked,
+        allowJobs: document.getElementById('access-jobs').checked
       };
 
       if (userData.networks.length === 0) {
@@ -2023,7 +2053,8 @@
           Signalisation: u.allowSignalisation === true ? 'Oui' : 'Non',
           Entretien: u.allowMaintenance === true ? 'Oui' : 'Non',
           Météo: u.allowMeteo === true ? 'Oui' : 'Non',
-          'Régis gère': u.allowRegis === true ? 'Oui' : 'Non'
+          'Régis gère': u.allowRegis === true ? 'Oui' : 'Non',
+          Jobs: u.allowJobs === true ? 'Oui' : 'Non'
         };
       });
 
@@ -2098,6 +2129,20 @@
       });
     }
 
+    // CSV of the jobs: one row per job; the travail of the Entretien reports that worked on it are summed up in one cell. JSON keeps the tasks as stored.
+    function jobsCsvRows(jobs) {
+      return jobs.map(j => ({
+        id: j.id, network: j.network || '', title: j.title || '', description: j.description || '',
+        sector: j.sectorName || j.sector || '', trail: j.trail || '',
+        priority: Jobs.priority(j.priority).label, status: Jobs.status(j.status).label,
+        createdAt: j.createdAt || '', createdByName: j.createdByName || '', updatedAt: j.updatedAt || '',
+        origin: Jobs.SOURCES[j.sourceApp] || '', originId: j.sourceId || '',
+        linkedWorkCount: (j.workLinks || []).length,
+        linkedWork: (j.workLinks || []).map(l => [l.date, l.builderName, Jobs.status(l.status).label, l.trail].filter(Boolean).join(' - ')).join(' | '),
+        closingDescription: j.closingDescription || '', closedAt: j.closedAt || ''
+      }));
+    }
+
     // CSV of the weather readings: one row per reading; for each measure the typed value (<mesure>) and the one read
     // from Environment Canada (<mesure>_web); who entered it and when. JSON keeps the readings as stored.
     function weatherCsvRows(readings) {
@@ -2126,10 +2171,11 @@
         infraction: document.getElementById('export-infractions').checked,
         signalisation: document.getElementById('export-signalisations').checked,
         maintenance: document.getElementById('export-maintenance').checked,
-        meteo: document.getElementById('export-meteo').checked
+        meteo: document.getElementById('export-meteo').checked,
+        jobs: document.getElementById('export-jobs').checked
       };
 
-      if (!opts.trail && !opts.shelter && !opts.infraction && !opts.signalisation && !opts.maintenance && !opts.meteo) {
+      if (!opts.trail && !opts.shelter && !opts.infraction && !opts.signalisation && !opts.maintenance && !opts.meteo && !opts.jobs) {
         showExportStatus('Sélectionnez au moins un type de données.', 'error');
         return;
       }
@@ -2224,6 +2270,23 @@
           } catch(e) { exportResult.maintenanceLogs = []; exportResult.summary.maintenanceLogsCount = 0; }
         }
 
+        if (opts.jobs) {
+          showExportStatus('Chargement jobs...', 'info');
+          try {
+            // The tasks of the chosen activity created since the start date, plus every task still open whatever its date (none is left out)
+            const snap = await db.collection('jobs').get();
+            const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).filter(inNetwork).filter(j => Jobs.isOpen(j) || (j.createdAt && j.createdAt.toDate && j.createdAt.toDate() >= startDate))
+              .map(j => {
+                const out = formatDocumentDates(j);
+                out.workLinks = (j.workLinks || []).map(l => ({ ...l, date: formatExportDate(l.date) }));
+                return out;
+              });
+            data.forEach(d => { if (d.closedBy && !d.closedByName) d.closedByName = inspectorsMap.get(d.closedBy) || d.closedBy; if (d.createdBy && !d.createdByName) d.createdByName = inspectorsMap.get(d.createdBy) || d.createdBy; });
+            exportResult.jobs = data;
+            exportResult.summary.jobsCount = data.length;
+          } catch(e) { exportResult.jobs = []; exportResult.summary.jobsCount = 0; }
+        }
+
         if (opts.meteo) {
           showExportStatus('Chargement météo...', 'info');
           try {
@@ -2252,6 +2315,7 @@
             { key: 'infractions', label: 'Infractions' },
             { key: 'signalisations', label: 'Signalisations' },
             { key: 'maintenanceLogs', label: 'Entretien', rows: maintenanceCsvRows },
+            { key: 'jobs', label: 'Jobs', rows: jobsCsvRows },
             { key: 'weatherRecords', label: 'Meteo', rows: weatherCsvRows }
           ];
           types.forEach((t, i) => {
@@ -2267,7 +2331,7 @@
 
         const total = (exportResult.summary.trailInspectionsCount || 0) + (exportResult.summary.shelterInspectionsCount || 0) + 
                       (exportResult.summary.infractionsCount || 0) + (exportResult.summary.signalisationsCount || 0) +
-                      (exportResult.summary.maintenanceLogsCount || 0) + (exportResult.summary.weatherRecordsCount || 0);
+                      (exportResult.summary.maintenanceLogsCount || 0) + (exportResult.summary.weatherRecordsCount || 0) + (exportResult.summary.jobsCount || 0);
         showExportStatus(`✓ Export réussi! ${total} enregistrements.`, 'success');
 
       } catch (error) {
@@ -2350,7 +2414,8 @@
         user.allowSignalisation = user.allowsignalisation === 'true' || user.allowsignalisation === '1';
         user.allowMaintenance = user.allowmaintenance === 'true' || user.allowmaintenance === '1';
         user.allowMeteo = user.allowmeteo === 'true' || user.allowmeteo === '1';
-      user.allowRegis = user.allowregis === 'true' || user.allowregis === '1';
+        user.allowRegis = user.allowregis === 'true' || user.allowregis === '1';
+        user.allowJobs = user.allowjobs === 'true' || user.allowjobs === '1';
 
         // Activities: "ski|bike". A system admin gets all of them; anyone else only gets
         // activities the importing admin holds. Empty column = default activity.
@@ -2407,6 +2472,7 @@
             <span class="access-badge--clickable access-badge--maintenance ${user.allowMaintenance ? 'is-active' : ''}" style="width:24px;height:24px;font-size:0.875rem;">🪏</span>
             <span class="access-badge--clickable access-badge--meteo ${user.allowMeteo ? 'is-active' : ''}" style="width:24px;height:24px;font-size:0.875rem;">🌦️</span>
             <span class="access-badge--clickable access-badge--regis ${user.allowRegis ? 'is-active' : ''}" style="width:24px;height:24px;font-size:0.875rem;">🏔️</span>
+            <span class="access-badge--clickable access-badge--jobs ${user.allowJobs ? 'is-active' : ''}" style="width:24px;height:24px;font-size:0.875rem;">🛠️</span>
           </td>
         </tr>
       `}).join('');
@@ -2488,7 +2554,8 @@
             allowSignalisation: user.allowSignalisation,
             allowMaintenance: user.allowMaintenance,
             allowMeteo: user.allowMeteo,
-          allowRegis: user.allowRegis === true,
+            allowRegis: user.allowRegis === true,
+            allowJobs: user.allowJobs === true,
             createdAt: firebase.firestore.FieldValue.serverTimestamp(),
             createdBy: currentUser.uid,
             importedVia: 'bulk_import'
@@ -2557,10 +2624,10 @@
     }
 
     // One column per field of a user profile that an import can set (status is always "active")
-    const CSV_TEMPLATE = `name,email,password,role,phone,allowInspection,allowInfraction,allowSignalisation,allowMaintenance,allowMeteo,allowRegis,networks
-Jean Dupont,jean.dupont@example.com,MotDePasse123,inspector,514-555-1234,true,false,false,false,false,false,ski
-Sophie Gagnon,sophie.gagnon@example.com,MotDePasse789,inspector,,true,false,false,true,false,false,bike
-Marie Tremblay,marie.tremblay@example.com,MotDePasse456,admin,,true,true,true,false,true,true,ski|bike`;
+    const CSV_TEMPLATE = `name,email,password,role,phone,allowInspection,allowInfraction,allowSignalisation,allowMaintenance,allowMeteo,allowRegis,allowJobs,networks
+Jean Dupont,jean.dupont@example.com,MotDePasse123,inspector,514-555-1234,true,false,false,false,false,false,false,ski
+Sophie Gagnon,sophie.gagnon@example.com,MotDePasse789,inspector,,true,false,false,true,false,false,false,bike
+Marie Tremblay,marie.tremblay@example.com,MotDePasse456,admin,,true,true,true,false,true,true,true,ski|bike`;
 
     function downloadCsvTemplate() {
       downloadFile('\uFEFF' + CSV_TEMPLATE, 'modele_import_utilisateurs.csv', 'text/csv;charset=utf-8');
@@ -2603,6 +2670,7 @@ Marie Tremblay,marie.tremblay@example.com,MotDePasse456,admin,,true,true,true,fa
             loadVolunteersTab();
           }
           setupLinksTab(bikeAdmin);
+          SeasonSummaryView.mount(document.getElementById('summary-root'));   // reads nothing until "Calculer le bilan" is pressed
           document.getElementById('volunteers-select-all').addEventListener('change', (e) => toggleAllVolunteers(e.target.checked));
           document.getElementById('delete-selected-volunteers-btn').addEventListener('click', deleteSelectedVolunteers);
           document.getElementById('delete-all-volunteers-btn').addEventListener('click', deleteAllVolunteers);

@@ -154,6 +154,8 @@
         <div class="form-section-body"><div class="form-group"><label class="form-label" for="comments">Commentaires généraux et observations</label><textarea class="form-textarea" id="comments" rows="4" placeholder="Ajoutez des commentaires détaillés, observations particulières, recommandations pour l'entretien..."></textarea></div></div>
       </div>
 
+      <div id="job-tick-box"></div>
+
       <!-- Form Actions -->
       <div class="form-actions">
         <button type="button" class="btn btn-secondary" id="cancel-action">Annuler</button>
@@ -164,6 +166,8 @@
   <footer class="footer footer--simple"><div class="footer__content"><p class="footer__copyright">© 2026 Regis for Mont Orford</p></div></footer>
   <script src="https://cdn.jsdelivr.net/npm/exif-js@2.3.0/exif.min.js"></script>
   <script src="../js/core/utils.js"></script>
+  <script src="../js/core/form-draft.js"></script>
+  <script src="../js/services/badges.js"></script>
   <script src="../js/core/datetime-field.js"></script>
   <script src="../js/core/theme.js"></script>
   <script src="../js/core/ui.js"></script>
@@ -172,10 +176,14 @@
   <script src="../js/utils/photo-picker.js"></script>
   <script src="../js/services/photo-service.js"></script>
   <script src="../js/services/trail-service.js"></script>
+  <script src="../js/services/jobs.js"></script>
+  <script src="../js/services/job-from-report.js"></script>
 
   <script>
+    let jobTick = null;   // the tick "Créer un job" (js/services/job-from-report.js), null when it is not offered to this person
     let selectedFiles = [], storage = null;
     let photoPicker = null;
+    let draft = null;   // FormDraft: the unsent report kept on the phone (js/core/form-draft.js)
     const form = document.getElementById('shelter-inspection-form');
     const shelterSelect = document.getElementById('shelter-select');
     const inspectorName = document.getElementById('inspector-name');
@@ -228,6 +236,9 @@
             return;
           }
           await loadShelters();
+          jobTick = JobFromReport.mountTick(document.getElementById('job-tick-box'), userData);   // before the draft: its fields can be restored
+          draft = FormDraft.attach(form, { uid: currentUser.uid, page: 'inspection-shelter-report', network: Network.current() });
+          draft.offer();   // an unsent inspection from last time (no signal, a reload): offered back, never forced
         }
       });
     }
@@ -308,12 +319,14 @@
       if (!form.querySelector('input[name="condition"]:checked')) { showError('Veuillez sélectionner l\'état général'); return; }
       if (!form.querySelector('input[name="cleanliness"]:checked')) { showError('Veuillez sélectionner la propreté'); return; }
       if (!form.querySelector('input[name="accessibility"]:checked')) { showError('Veuillez sélectionner l\'accessibilité'); return; }
-      
+      if (jobTick && jobTick.error()) { showError(jobTick.error()); return; }
+      if (draft && draft.offlineBlock()) return;   // no signal: keep the draft instead of a save that would hang
+
       setFormLoading(true, 'Enregistrement...');
       try {
         // Collect issues
         const issues = [];
-        form.querySelectorAll('input[type="checkbox"]:checked').forEach(cb => { if (cb.value) issues.push(cb.value); });
+        form.querySelectorAll('input[type="checkbox"]:checked').forEach(cb => { if (cb.value && !cb.hasAttribute('data-not-issue')) issues.push(cb.value); });
         if (otherIssues.value.trim()) issues.push(otherIssues.value.trim());
         
         // Build form data
@@ -361,10 +374,20 @@
         // Save to Firestore
         setFormLoading(true, 'Enregistrement...');
         const inspRef = db.collection('shelter_inspections').doc();
-        await inspRef.set(formData);
-        
         const shelterName = shelterSelect.options[shelterSelect.selectedIndex].text;
-        showSuccess(`Inspection de l'abri "${shelterName}" enregistrée avec succès!`);
+        const makeTask = !!(jobTick && jobTick.wanted());
+        if (makeTask) {
+          // The ticked "Créer un job": written in the SAME save as the inspection (both or none), with this inspection as its origin
+          const batch = db.batch();
+          batch.set(inspRef, formData);
+          batch.set(db.collection('jobs').doc(), jobTick.build({ place: shelterName, name: inspectorName.value, date: dateTime, sourceId: inspRef.id }));
+          await batch.commit();
+        } else {
+          await inspRef.set(formData);
+        }
+        showSuccess(`Inspection de l'abri "${shelterName}" enregistrée avec succès!` + (makeTask ? ' Job créé.' : ''));
+        if (draft) draft.clear();
+        Badges.forget();   // the medal on the portal counts this report at its next opening
         
         // Save inspector info before reset
         const savedInspectorName = inspectorName.value;
@@ -382,7 +405,7 @@
           hideMessages(); 
         }, 2000);
         
-      } catch (e) { console.error('Error:', e); showError('Erreur: ' + e.message); }
+      } catch (e) { console.error('Error:', e); showError('Erreur: ' + e.message); if (draft) draft.kept(); }   // the report stays filled, and is kept on the phone if the page is closed
       finally { setFormLoading(false); }
     }
 
