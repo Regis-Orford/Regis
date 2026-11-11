@@ -38,6 +38,7 @@
   function itemAttrs(item) {
     const attrs = [];
     if (item.admin) attrs.push('data-require-admin');
+    if (item.hideForAdmin) attrs.push('data-hide-for-admin');   // shown to everybody except administrators (auth.js)
     if (item.requires) attrs.push(`data-requires="${item.requires}"`);
     if (item.admin || item.requires) attrs.push('style="display:none;"');
     return attrs.length ? ' ' + attrs.join(' ') : '';
@@ -152,7 +153,7 @@
       <div class="mobile-nav__theme">
         <span class="mobile-nav__theme-label"><span>🌙</span><span>Mode sombre</span></span>
         <label class="form-switch">
-          <input type="checkbox" class="form-switch__input mobile-nav__theme-toggle" id="mobile-theme-toggle" onchange="window.themeManager.toggle()">
+          <input type="checkbox" class="form-switch__input mobile-nav__theme-toggle" id="mobile-theme-toggle" aria-label="Mode sombre" onchange="window.themeManager.toggle()">
         </label>
       </div>
     </nav>
@@ -191,6 +192,14 @@
     script.src = url('js/core/occasions.js');
     document.head.appendChild(script);
   } catch (e) { /* the occasions are a decoration: never block the page */ }
+
+  // ---- Keyboard and assistive-technology helpers (js/core/a11y.js) ----------------------------------
+  // Windows as real dialogs (role, Tab kept inside, focus in and back) and keyboard access to clickable rows and pins.
+  try {
+    const a11y = document.createElement('script');
+    a11y.src = url('js/core/a11y.js');
+    document.head.appendChild(a11y);
+  } catch (e) { /* a convenience: never block the page */ }
 
   // ---- Activity (network) switcher ---------------------------------------------------
   // Filled once the user is known (network.js fires "networkReady" from auth.js). Only
